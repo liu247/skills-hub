@@ -74,6 +74,22 @@ fn cursor_sync_forces_copy() {
     assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
 }
 
+#[test]
+fn kiro_cli_sync_forces_copy() {
+    let src_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(src_dir.path().join("s")).unwrap();
+    fs::write(src_dir.path().join("s/a.txt"), b"ok").unwrap();
+
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    // Kiro 的扫描器会跳过符号链接，必须强制 copy 成真实目录。
+    let out = sync_dir_for_tool_with_overwrite("kiro_cli", src_dir.path(), &target, false).unwrap();
+    assert!(matches!(out.mode_used, SyncMode::Copy));
+    assert!(target.join("s/a.txt").exists());
+    assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
+}
+
 #[cfg(unix)]
 #[test]
 fn copy_overwrite_replaces_broken_symlink_target() {

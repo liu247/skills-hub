@@ -114,14 +114,24 @@ pub fn sync_dir_copy_with_overwrite(
     })
 }
 
+/// 部分工具的 skill 扫描器会跳过符号链接，只识别真实目录，
+/// 因此这些工具必须强制使用 copy 而不是 symlink/junction，否则同步后工具内不可见。
+/// - cursor: 不支持软链/junction
+/// - kiro_cli: 扫描器过滤 `type !== Directory`，符号链接会被跳过
+fn tool_requires_copy(tool_key: &str) -> bool {
+    const COPY_ONLY_TOOLS: [&str; 2] = ["cursor", "kiro_cli"];
+    COPY_ONLY_TOOLS
+        .iter()
+        .any(|t| tool_key.eq_ignore_ascii_case(t))
+}
+
 pub fn sync_dir_for_tool_with_overwrite(
     tool_key: &str,
     source: &Path,
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
-    // Cursor 目前不支持软链/junction：强制使用 copy，避免同步后在 Cursor 内不可用。
-    if tool_key.eq_ignore_ascii_case("cursor") {
+    if tool_requires_copy(tool_key) {
         return sync_dir_copy_with_overwrite(source, target, overwrite);
     }
     sync_dir_hybrid_with_overwrite(source, target, overwrite)
