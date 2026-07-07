@@ -1131,6 +1131,7 @@ function App() {
         last_error: prev?.last_error ?? null,
         last_checked: prev?.last_checked ?? 0,
         last_updated: prev?.last_updated ?? 0,
+        last_unchanged: prev?.last_unchanged ?? 0,
         last_failed: prev?.last_failed ?? 0,
         progress: prev?.progress ?? {
           total: 0,
@@ -1178,6 +1179,7 @@ function App() {
       last_error: null,
       last_checked: 0,
       last_updated: 0,
+      last_unchanged: 0,
       last_failed: 0,
       progress: {
         total: 0,

@@ -146,6 +146,7 @@ export type AutoUpdateConfigDto = {
   last_error?: string | null
   last_checked: number
   last_updated: number
+  last_unchanged: number
   last_failed: number
   progress: AutoUpdateProgressSnapshotDto
 }
@@ -153,6 +154,7 @@ export type AutoUpdateConfigDto = {
 export type AutoUpdateRunResultDto = {
   checked: number
   updated: number
+  unchanged: number
   failed: number
   errors: string[]
   progress: AutoUpdateProgressSnapshotDto

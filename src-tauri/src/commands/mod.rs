@@ -455,6 +455,7 @@ pub struct AutoUpdateConfigDto {
     pub last_error: Option<String>,
     pub last_checked: usize,
     pub last_updated: usize,
+    pub last_unchanged: usize,
     pub last_failed: usize,
     pub progress: AutoUpdateProgressSnapshot,
 }
@@ -463,6 +464,7 @@ pub struct AutoUpdateConfigDto {
 pub struct AutoUpdateRunResultDto {
     pub checked: usize,
     pub updated: usize,
+    pub unchanged: usize,
     pub failed: usize,
     pub errors: Vec<String>,
     pub progress: AutoUpdateProgressSnapshot,
@@ -532,6 +534,7 @@ pub async fn set_auto_update_config(
                 last_error: existing.last_error,
                 last_checked: existing.last_checked,
                 last_updated: existing.last_updated,
+                last_unchanged: existing.last_unchanged,
                 last_failed: existing.last_failed,
                 progress: existing.progress,
             },
@@ -1638,6 +1641,7 @@ fn to_auto_update_config_dto(mut config: AutoUpdateConfig) -> AutoUpdateConfigDt
         last_error: config.last_error,
         last_checked: config.last_checked,
         last_updated: config.last_updated,
+        last_unchanged: config.last_unchanged,
         last_failed: config.last_failed,
         progress: config.progress,
     }
@@ -1647,6 +1651,7 @@ fn to_auto_update_run_result_dto(result: AutoUpdateRunResult) -> AutoUpdateRunRe
     AutoUpdateRunResultDto {
         checked: result.checked,
         updated: result.updated,
+        unchanged: result.unchanged,
         failed: result.failed,
         errors: result.errors,
         progress: result.progress,

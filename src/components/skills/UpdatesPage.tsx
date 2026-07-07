@@ -314,6 +314,10 @@ const UpdatesPage = ({
               <span>{t('autoUpdateUpdatedShort')}</span>
               <strong>{autoUpdateConfig?.last_updated ?? 0}</strong>
             </div>
+            <div>
+              <span>{t('autoUpdateUnchangedShort')}</span>
+              <strong>{autoUpdateConfig?.last_unchanged ?? 0}</strong>
+            </div>
             <div className={(autoUpdateConfig?.last_failed ?? 0) > 0 ? 'danger' : ''}>
               <span>{t('autoUpdateFailedShort')}</span>
               <strong>{autoUpdateConfig?.last_failed ?? 0}</strong>

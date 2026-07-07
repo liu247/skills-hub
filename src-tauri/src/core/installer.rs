@@ -648,6 +648,9 @@ pub struct UpdateResult {
     pub content_hash: Option<String>,
     pub source_revision: Option<String>,
     pub updated_targets: Vec<String>,
+    /// True when the source produced content that actually differs from what we have on disk.
+    /// False when the check ran successfully but nothing needed to change (unchanged skill).
+    pub changed: bool,
 }
 
 pub fn update_managed_skill_from_source<R: tauri::Runtime>(
@@ -669,6 +672,47 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         .to_path_buf();
 
     let now = now_ms();
+
+    // ---- Fast unchanged-detection for local skills ----
+    // Hash source + central directly (bypassing the release-mode gate on content_hash).
+    // If both hashes match, nothing has changed since last sync: skip the destructive swap
+    // and re-sync entirely, and report changed=false so callers can count it correctly.
+    if record.source_type == "local" {
+        if let Some(source) = record.source_ref.as_deref() {
+            let source_path = PathBuf::from(source);
+            if source_path.exists() {
+                if let (Ok(src_hash), Ok(central_hash)) =
+                    (hash_dir(&source_path), hash_dir(&central_path))
+                {
+                    if src_hash == central_hash {
+                        // Refresh last_sync_at/last_seen_at so we know the check ran.
+                        let updated = SkillRecord {
+                            last_sync_at: Some(now),
+                            last_seen_at: now,
+                            status: "ok".to_string(),
+                            // Populate content_hash going forward so future checks are cheap
+                            // even in release builds where compute_content_hash() is gated off.
+                            content_hash: record
+                                .content_hash
+                                .clone()
+                                .or_else(|| Some(src_hash.clone())),
+                            ..record.clone()
+                        };
+                        store.upsert_skill(&updated)?;
+                        return Ok(UpdateResult {
+                            skill_id: record.id,
+                            name: record.name,
+                            central_path,
+                            content_hash: updated.content_hash,
+                            source_revision: record.source_revision,
+                            updated_targets: Vec::new(),
+                            changed: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     // Build new content in a sibling temp dir for safe swap.
     let staging_dir = central_parent.join(format!(".skills-hub-update-{}", Uuid::new_v4()));
@@ -704,6 +748,32 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
             )?
         };
         new_revision = Some(rev);
+
+        // ---- Fast unchanged-detection for git skills ----
+        // If the new revision matches what we already installed and central still exists,
+        // nothing has actually changed: skip the destructive swap and re-sync entirely.
+        if let (Some(new_rev), Some(old_rev)) =
+            (new_revision.as_ref(), record.source_revision.as_ref())
+        {
+            if new_rev == old_rev {
+                let updated = SkillRecord {
+                    last_sync_at: Some(now),
+                    last_seen_at: now,
+                    status: "ok".to_string(),
+                    ..record.clone()
+                };
+                store.upsert_skill(&updated)?;
+                return Ok(UpdateResult {
+                    skill_id: record.id,
+                    name: record.name,
+                    central_path,
+                    content_hash: record.content_hash,
+                    source_revision: new_revision,
+                    updated_targets: Vec::new(),
+                    changed: false,
+                });
+            }
+        }
 
         // Prefer stored source_subpath (from install time) over URL-parsed subpath.
         // For legacy records where source_subpath is NULL and URL has no subpath,
@@ -848,6 +918,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         content_hash,
         source_revision: new_revision,
         updated_targets,
+        changed: true,
     })
 }
 

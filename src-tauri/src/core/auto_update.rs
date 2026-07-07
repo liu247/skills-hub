@@ -17,6 +17,7 @@ pub const AUTO_UPDATE_LAST_STATUS_KEY: &str = "skill_auto_update_last_status";
 pub const AUTO_UPDATE_LAST_ERROR_KEY: &str = "skill_auto_update_last_error";
 pub const AUTO_UPDATE_LAST_CHECKED_KEY: &str = "skill_auto_update_last_checked";
 pub const AUTO_UPDATE_LAST_UPDATED_KEY: &str = "skill_auto_update_last_updated";
+pub const AUTO_UPDATE_LAST_UNCHANGED_KEY: &str = "skill_auto_update_last_unchanged";
 pub const AUTO_UPDATE_LAST_FAILED_KEY: &str = "skill_auto_update_last_failed";
 pub const AUTO_UPDATE_PROGRESS_KEY: &str = "skill_auto_update_progress";
 
@@ -72,6 +73,7 @@ pub struct AutoUpdateConfig {
     pub last_error: Option<String>,
     pub last_checked: usize,
     pub last_updated: usize,
+    pub last_unchanged: usize,
     pub last_failed: usize,
     pub progress: AutoUpdateProgressSnapshot,
 }
@@ -80,6 +82,7 @@ pub struct AutoUpdateConfig {
 pub struct AutoUpdateRunResult {
     pub checked: usize,
     pub updated: usize,
+    pub unchanged: usize,
     pub failed: usize,
     pub errors: Vec<String>,
     pub progress: AutoUpdateProgressSnapshot,
@@ -129,6 +132,7 @@ pub fn get_auto_update_config(store: &SkillStore) -> Result<AutoUpdateConfig> {
     let last_error = store.get_setting(AUTO_UPDATE_LAST_ERROR_KEY)?;
     let last_checked = parse_usize_setting(store, AUTO_UPDATE_LAST_CHECKED_KEY)?;
     let last_updated = parse_usize_setting(store, AUTO_UPDATE_LAST_UPDATED_KEY)?;
+    let last_unchanged = parse_usize_setting(store, AUTO_UPDATE_LAST_UNCHANGED_KEY)?;
     let last_failed = parse_usize_setting(store, AUTO_UPDATE_LAST_FAILED_KEY)?;
     let mut progress = parse_progress_setting(store)?;
     if progress_is_empty(&progress) {
@@ -149,6 +153,7 @@ pub fn get_auto_update_config(store: &SkillStore) -> Result<AutoUpdateConfig> {
         last_error,
         last_checked,
         last_updated,
+        last_unchanged,
         last_failed,
         progress,
     })
@@ -225,6 +230,7 @@ pub fn run_auto_update_now<R: tauri::Runtime>(
     let mut result = AutoUpdateRunResult {
         checked: entries.len(),
         updated: 0,
+        unchanged: 0,
         failed: 0,
         errors: Vec::new(),
         progress: progress.clone(),
@@ -240,7 +246,11 @@ pub fn run_auto_update_now<R: tauri::Runtime>(
 
         match update_managed_skill_from_source(app, store, &skill_id) {
             Ok(update) => {
-                result.updated += 1;
+                if update.changed {
+                    result.updated += 1;
+                } else {
+                    result.unchanged += 1;
+                }
                 progress.succeeded.push(AutoUpdateSkillProgress {
                     skill_id,
                     name: update.name,
@@ -288,6 +298,7 @@ fn record_auto_update_started(store: &SkillStore, checked: usize) -> Result<()> 
     store.set_setting(AUTO_UPDATE_LAST_STATUS_KEY, "running")?;
     store.set_setting(AUTO_UPDATE_LAST_CHECKED_KEY, &checked.to_string())?;
     store.set_setting(AUTO_UPDATE_LAST_UPDATED_KEY, "0")?;
+    store.set_setting(AUTO_UPDATE_LAST_UNCHANGED_KEY, "0")?;
     store.set_setting(AUTO_UPDATE_LAST_FAILED_KEY, "0")?;
     store.set_setting(AUTO_UPDATE_LAST_ERROR_KEY, "")?;
     record_auto_update_progress_snapshot(
@@ -304,6 +315,10 @@ fn record_auto_update_progress(store: &SkillStore, result: &AutoUpdateRunResult)
     store.set_setting(AUTO_UPDATE_LAST_STATUS_KEY, "running")?;
     store.set_setting(AUTO_UPDATE_LAST_CHECKED_KEY, &result.checked.to_string())?;
     store.set_setting(AUTO_UPDATE_LAST_UPDATED_KEY, &result.updated.to_string())?;
+    store.set_setting(
+        AUTO_UPDATE_LAST_UNCHANGED_KEY,
+        &result.unchanged.to_string(),
+    )?;
     store.set_setting(AUTO_UPDATE_LAST_FAILED_KEY, &result.failed.to_string())?;
     store.set_setting(AUTO_UPDATE_LAST_ERROR_KEY, &result.errors.join("\n"))?;
     record_auto_update_progress_snapshot(store, &result.progress)?;
@@ -340,6 +355,10 @@ fn record_auto_update_result(store: &SkillStore, result: &AutoUpdateRunResult) -
     store.set_setting(AUTO_UPDATE_LAST_STATUS_KEY, status)?;
     store.set_setting(AUTO_UPDATE_LAST_CHECKED_KEY, &result.checked.to_string())?;
     store.set_setting(AUTO_UPDATE_LAST_UPDATED_KEY, &result.updated.to_string())?;
+    store.set_setting(
+        AUTO_UPDATE_LAST_UNCHANGED_KEY,
+        &result.unchanged.to_string(),
+    )?;
     store.set_setting(AUTO_UPDATE_LAST_FAILED_KEY, &result.failed.to_string())?;
     store.set_setting(AUTO_UPDATE_LAST_ERROR_KEY, &result.errors.join("\n"))?;
     record_auto_update_progress_snapshot(store, &result.progress)?;

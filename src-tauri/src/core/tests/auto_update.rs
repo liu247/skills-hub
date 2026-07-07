@@ -97,6 +97,7 @@ fn config_roundtrips_and_rejects_invalid_interval() {
             last_error: None,
             last_checked: 0,
             last_updated: 0,
+            last_unchanged: 0,
             last_failed: 0,
             progress: AutoUpdateProgressSnapshot::default(),
         },
@@ -123,6 +124,7 @@ fn config_roundtrips_and_rejects_invalid_interval() {
             last_error: None,
             last_checked: 0,
             last_updated: 0,
+            last_unchanged: 0,
             last_failed: 0,
             progress: AutoUpdateProgressSnapshot::default(),
         },
@@ -150,6 +152,7 @@ fn schedule_supports_minutes_and_daily_time() {
             last_error: None,
             last_checked: 0,
             last_updated: 0,
+            last_unchanged: 0,
             last_failed: 0,
             progress: AutoUpdateProgressSnapshot::default(),
         },
@@ -185,6 +188,7 @@ fn due_check_respects_enabled_state_and_interval() {
         last_error: None,
         last_checked: 0,
         last_updated: 0,
+        last_unchanged: 0,
         last_failed: 0,
         progress: AutoUpdateProgressSnapshot::default(),
     };
@@ -267,6 +271,7 @@ fn progress_snapshot_is_persisted_while_update_is_running() {
         &AutoUpdateRunResult {
             checked: 60,
             updated: 12,
+            unchanged: 0,
             failed: 3,
             errors: vec!["skill-a: network timeout".to_string()],
             progress: AutoUpdateProgressSnapshot::default(),
@@ -294,6 +299,7 @@ fn starting_update_clears_previous_result_and_progress() {
         &AutoUpdateRunResult {
             checked: 2,
             updated: 1,
+            unchanged: 0,
             failed: 1,
             errors: vec!["old-skill: old error".to_string()],
             progress: AutoUpdateProgressSnapshot {
@@ -347,6 +353,7 @@ fn started_and_finished_times_are_recorded_separately() {
         &AutoUpdateRunResult {
             checked: 1,
             updated: 1,
+            unchanged: 0,
             failed: 0,
             errors: vec![],
             progress: AutoUpdateProgressSnapshot::default(),
