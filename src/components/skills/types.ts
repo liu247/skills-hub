@@ -60,6 +60,13 @@ export type ManagedSkill = {
     target_path: string
     synced_at?: number | null
   }[]
+  collection?: string | null
+}
+
+export type CollectionDto = {
+  name: string
+  skill_count: number
+  updated_at: number
 }
 
 export type GitSkillCandidate = {

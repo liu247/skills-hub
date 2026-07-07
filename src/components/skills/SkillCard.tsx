@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Box, Copy, Folder, Github, Power, RefreshCw, Tag, Trash2 } from 'lucide-react'
+import { Box, Copy, Folder, FolderKanban, Github, Power, RefreshCw, Tag, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { TFunction } from 'i18next'
 import type { ManagedSkill, ToolOption } from './types'
@@ -25,6 +25,7 @@ type SkillCardProps = {
   onOpenScope: (skill: ManagedSkill) => void
   onOpenDetail: (skill: ManagedSkill) => void
   onEditTags: (skill: ManagedSkill) => void
+  onAssignCollection: (skill: ManagedSkill) => void
   onToggleBulkSelection: (skillId: string) => void
   getSkillScope: (skill: ManagedSkill) => 'global' | 'project'
   getSkillProjects: (skill: ManagedSkill) => string[]
@@ -49,6 +50,7 @@ const SkillCard = ({
   onOpenScope,
   onOpenDetail,
   onEditTags,
+  onAssignCollection,
   onToggleBulkSelection,
   getSkillScope,
   getSkillProjects,
@@ -256,6 +258,20 @@ const SkillCard = ({
           title={t('editTags')}
         >
           <Tag size={16} />
+        </button>
+        <button
+          className={`card-btn collection-action${skill.collection ? ' has-collection' : ''}`}
+          type="button"
+          onClick={() => onAssignCollection(skill)}
+          disabled={loading}
+          aria-label={t('assignCollection')}
+          title={
+            skill.collection
+              ? t('assignCollectionCurrent', { name: skill.collection })
+              : t('assignCollection')
+          }
+        >
+          <FolderKanban size={16} />
         </button>
         <button
           className="card-btn primary-action"

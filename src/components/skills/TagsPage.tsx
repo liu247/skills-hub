@@ -121,7 +121,7 @@ const TagsPage = ({
         ) : (
           filteredTags.map((tag) => (
             <div className="tags-table-row" key={tag.id}>
-              <span className="tags-table-name">#{tag.name}</span>
+              <span className="tags-table-name">{tag.name}</span>
               <span>{tag.skill_count}</span>
               <span>{formatRelative(tag.updated_at)}</span>
               <span className="tags-table-actions">

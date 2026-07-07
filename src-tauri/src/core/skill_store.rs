@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS skills (
   last_sync_at INTEGER NULL,
   last_seen_at INTEGER NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
-  status TEXT NOT NULL
+  status TEXT NOT NULL,
+  collection TEXT NULL
 );
 
 CREATE TABLE IF NOT EXISTS skill_targets (
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS discovered_skills (
 
 CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
+CREATE INDEX IF NOT EXISTS idx_skills_collection ON skills(collection);
 
 CREATE TABLE IF NOT EXISTS skill_tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +105,14 @@ pub struct SkillRecord {
     pub last_seen_at: i64,
     pub enabled: bool,
     pub status: String,
+    pub collection: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionRecord {
+    pub name: String,
+    pub skill_count: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +183,9 @@ impl SkillStore {
                 if user_version < 6 {
                     migrate_skill_enabled_to_v6(conn)?;
                 }
+                if user_version < 7 {
+                    migrate_collection_to_v7(conn)?;
+                }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
                 anyhow::bail!(
@@ -221,10 +234,10 @@ impl SkillStore {
             conn.execute(
                 "INSERT INTO skills (
           id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-          created_at, updated_at, last_sync_at, last_seen_at, enabled, status
+          created_at, updated_at, last_sync_at, last_seen_at, enabled, status, collection
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-          ?10, ?11, ?12, ?13, ?14, ?15
+          ?10, ?11, ?12, ?13, ?14, ?15, ?16
         )
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
@@ -240,7 +253,8 @@ impl SkillStore {
           last_sync_at = excluded.last_sync_at,
           last_seen_at = excluded.last_seen_at,
           enabled = excluded.enabled,
-          status = excluded.status",
+          status = excluded.status,
+          collection = excluded.collection",
                 params![
                     record.id,
                     record.name,
@@ -256,7 +270,8 @@ impl SkillStore {
                     record.last_sync_at,
                     record.last_seen_at,
                     record.enabled as i32,
-                    record.status
+                    record.status,
+                    record.collection
                 ],
             )?;
             Ok(())
@@ -298,7 +313,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
         "SELECT id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-                created_at, updated_at, last_sync_at, last_seen_at, enabled, status
+                created_at, updated_at, last_sync_at, last_seen_at, enabled, status, collection
          FROM skills
          ORDER BY updated_at DESC",
       )?;
@@ -319,6 +334,7 @@ impl SkillStore {
                     last_seen_at: row.get(12)?,
                     enabled: row.get::<_, i32>(13)? != 0,
                     status: row.get(14)?,
+                    collection: row.get(15)?,
                 })
             })?;
 
@@ -334,7 +350,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
         "SELECT id, name, description, source_type, source_ref, source_subpath, source_revision, central_path, content_hash,
-                created_at, updated_at, last_sync_at, last_seen_at, enabled, status
+                created_at, updated_at, last_sync_at, last_seen_at, enabled, status, collection
          FROM skills
          WHERE id = ?1
          LIMIT 1",
@@ -357,6 +373,7 @@ impl SkillStore {
                     last_seen_at: row.get(12)?,
                     enabled: row.get::<_, i32>(13)? != 0,
                     status: row.get(14)?,
+                    collection: row.get(15)?,
                 }))
             } else {
                 Ok(None)
@@ -395,6 +412,102 @@ impl SkillStore {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM skills WHERE id = ?1", params![skill_id])?;
             Ok(())
+        })
+    }
+
+    /// Set collection for a single skill. Pass `None` to un-group it.
+    pub fn set_skill_collection(&self, skill_id: &str, collection: Option<&str>) -> Result<()> {
+        let normalized = collection.map(normalize_collection_name).transpose()?;
+        self.with_conn(|conn| {
+            let changed = conn.execute(
+                "UPDATE skills SET collection = ?1, updated_at = ?2 WHERE id = ?3",
+                params![normalized, now_ms(), skill_id],
+            )?;
+            if changed == 0 {
+                anyhow::bail!("skill not found: {}", skill_id);
+            }
+            Ok(())
+        })
+    }
+
+    /// Bulk-set collection for multiple skills. Pass `None` to un-group them.
+    pub fn set_skills_collection(
+        &self,
+        skill_ids: &[String],
+        collection: Option<&str>,
+    ) -> Result<()> {
+        if skill_ids.is_empty() {
+            return Ok(());
+        }
+        let normalized = collection.map(normalize_collection_name).transpose()?;
+        self.with_conn(|conn| {
+            let now = now_ms();
+            let tx = conn.unchecked_transaction()?;
+            {
+                let mut stmt =
+                    tx.prepare("UPDATE skills SET collection = ?1, updated_at = ?2 WHERE id = ?3")?;
+                for id in skill_ids {
+                    stmt.execute(params![normalized, now, id])?;
+                }
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Rename all skills currently in `old_name` to `new_name`.
+    pub fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<()> {
+        let normalized_new = normalize_collection_name(new_name)?;
+        let normalized_old = old_name.trim().to_string();
+        if normalized_old.is_empty() {
+            anyhow::bail!("collection name cannot be empty");
+        }
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skills SET collection = ?1, updated_at = ?2 WHERE collection = ?3",
+                params![normalized_new, now_ms(), normalized_old],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Un-group all skills in `name` (set collection to NULL).
+    pub fn clear_collection(&self, name: &str) -> Result<()> {
+        let normalized = name.trim().to_string();
+        if normalized.is_empty() {
+            anyhow::bail!("collection name cannot be empty");
+        }
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skills SET collection = NULL, updated_at = ?1 WHERE collection = ?2",
+                params![now_ms(), normalized],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// List all distinct collections with skill counts and most recent update.
+    pub fn list_collections_with_counts(&self) -> Result<Vec<CollectionRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT collection, COUNT(*) AS skill_count, MAX(updated_at) AS updated_at
+                 FROM skills
+                 WHERE collection IS NOT NULL AND TRIM(collection) <> ''
+                 GROUP BY collection
+                 ORDER BY LOWER(collection) ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(CollectionRecord {
+                    name: row.get(0)?,
+                    skill_count: row.get(1)?,
+                    updated_at: row.get(2)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
         })
     }
 
@@ -734,10 +847,26 @@ fn migrate_skill_enabled_to_v6(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_collection_to_v7(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "ALTER TABLE skills ADD COLUMN collection TEXT NULL;
+         CREATE INDEX IF NOT EXISTS idx_skills_collection ON skills(collection);",
+    )?;
+    Ok(())
+}
+
 fn normalize_tag_name(name: &str) -> Result<String> {
     let normalized = name.trim().to_string();
     if normalized.is_empty() {
         anyhow::bail!("tag name cannot be empty");
+    }
+    Ok(normalized)
+}
+
+fn normalize_collection_name(name: &str) -> Result<String> {
+    let normalized = name.trim().to_string();
+    if normalized.is_empty() {
+        anyhow::bail!("collection name cannot be empty");
     }
     Ok(normalized)
 }

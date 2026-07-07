@@ -1344,6 +1344,14 @@ pub struct ManagedSkillDto {
     pub status: String,
     pub tags: Vec<TagDto>,
     pub targets: Vec<SkillTargetDto>,
+    pub collection: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CollectionDto {
+    pub name: String,
+    pub skill_count: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1461,6 +1469,64 @@ pub fn set_skill_tags(
 #[tauri::command]
 pub fn get_untagged_skill_ids(store: State<'_, SkillStore>) -> Result<Vec<String>, String> {
     store.list_untagged_skill_ids().map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub fn list_collections(store: State<'_, SkillStore>) -> Result<Vec<CollectionDto>, String> {
+    store
+        .list_collections_with_counts()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|c| CollectionDto {
+                    name: c.name,
+                    skill_count: c.skill_count,
+                    updated_at: c.updated_at,
+                })
+                .collect()
+        })
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn set_skill_collection(
+    store: State<'_, SkillStore>,
+    skillId: String,
+    collection: Option<String>,
+) -> Result<(), String> {
+    store
+        .set_skill_collection(&skillId, collection.as_deref())
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn set_skills_collection(
+    store: State<'_, SkillStore>,
+    skillIds: Vec<String>,
+    collection: Option<String>,
+) -> Result<(), String> {
+    store
+        .set_skills_collection(&skillIds, collection.as_deref())
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn rename_collection(
+    store: State<'_, SkillStore>,
+    oldName: String,
+    newName: String,
+) -> Result<(), String> {
+    store
+        .rename_collection(&oldName, &newName)
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn clear_collection(store: State<'_, SkillStore>, name: String) -> Result<(), String> {
+    store.clear_collection(&name).map_err(format_anyhow_error)
 }
 
 #[tauri::command]
@@ -1646,6 +1712,7 @@ fn get_managed_skills_impl(store: &SkillStore) -> Result<Vec<ManagedSkillDto>, S
                 status: skill.status,
                 tags,
                 targets,
+                collection: skill.collection,
             }
         })
         .collect())

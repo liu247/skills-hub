@@ -194,6 +194,7 @@ fn get_managed_skills_impl_maps_targets() {
         last_seen_at: 1,
         enabled: true,
         status: "ok".to_string(),
+        collection: None,
     };
     store.upsert_skill(&skill).unwrap();
 

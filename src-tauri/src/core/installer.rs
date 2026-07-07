@@ -76,6 +76,8 @@ pub fn install_local_skill<R: tauri::Runtime>(
         last_seen_at: now,
         enabled: true,
         status: "ok".to_string(),
+        // Local installs have no natural "series"; user assigns manually.
+        collection: None,
     };
 
     store.upsert_skill(&record)?;
@@ -298,6 +300,9 @@ pub fn install_git_skill<R: tauri::Runtime>(
         last_seen_at: now,
         enabled: true,
         status: "ok".to_string(),
+        // Series key = repo name (e.g., "superpowers"). Skills installed from
+        // the same repo end up in the same collection automatically.
+        collection: Some(derive_name_from_repo_url(&parsed.clone_url)),
     };
 
     store.upsert_skill(&record)?;
@@ -794,6 +799,8 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         last_seen_at: now,
         enabled: record.enabled,
         status: "ok".to_string(),
+        // Preserve user's manual collection assignment across updates.
+        collection: record.collection.clone(),
     };
     store.upsert_skill(&updated)?;
 
@@ -1250,6 +1257,8 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
         last_seen_at: now,
         enabled: true,
         status: "ok".to_string(),
+        // Series key = repo name. All selections from the same repo share it.
+        collection: Some(derive_name_from_repo_url(&parsed.clone_url)),
     };
     store.upsert_skill(&record)?;
 

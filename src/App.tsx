@@ -19,6 +19,7 @@ import SkillDetailView from './components/skills/SkillDetailView'
 import Header from './components/skills/Header'
 import LoadingOverlay from './components/skills/LoadingOverlay'
 import SkillsList from './components/skills/SkillsList'
+import CollectionsList from './components/skills/CollectionsList'
 import TagsPage from './components/skills/TagsPage'
 import AddSkillModal from './components/skills/modals/AddSkillModal'
 import BulkDeleteModal from './components/skills/modals/BulkDeleteModal'
@@ -30,6 +31,7 @@ import GitPickModal from './components/skills/modals/GitPickModal'
 import LocalPickModal from './components/skills/modals/LocalPickModal'
 import ImportModal from './components/skills/modals/ImportModal'
 import NewToolsModal from './components/skills/modals/NewToolsModal'
+import AssignCollectionModal from './components/skills/modals/AssignCollectionModal'
 import ScopeSyncModal from './components/skills/modals/ScopeSyncModal'
 import SharedDirModal from './components/skills/modals/SharedDirModal'
 import SettingsPage from './components/skills/SettingsPage'
@@ -58,6 +60,7 @@ import type {
   InstallResultDto,
   LocalSkillCandidate,
   ManagedSkill,
+  CollectionDto,
   OnboardingPlan,
   OnlineSkillDto,
   TagWithCountDto,
@@ -144,6 +147,12 @@ function App() {
   const [tags, setTags] = useState<TagWithCountDto[]>([])
   const [selectedTagIds, setSelectedTagIds] = useState<number[]>([])
   const [includeUntagged, setIncludeUntagged] = useState(false)
+  const [collections, setCollections] = useState<CollectionDto[]>([])
+  // 'series' 时展示系列卡片（landing）；'skills' 时展示某个系列内的 skills（activeCollection 决定）
+  const [collectionView, setCollectionView] = useState<'series' | 'skills'>('series')
+  // 当 collectionView === 'skills' 时生效：字符串 = 具体系列名；null = 未分组
+  const [activeCollection, setActiveCollection] = useState<string | null>(null)
+  const [assignCollectionSkillIds, setAssignCollectionSkillIds] = useState<string[] | null>(null)
   const [tagEditorSkill, setTagEditorSkill] = useState<ManagedSkill | null>(null)
   const [pendingDeleteTag, setPendingDeleteTag] = useState<TagWithCountDto | null>(null)
   const [addModalTab, setAddModalTab] = useState<'local' | 'git'>('git')
@@ -341,12 +350,31 @@ function App() {
     }
   }, [invokeTauri])
 
+  const loadCollections = useCallback(async () => {
+    try {
+      const result = await invokeTauri<CollectionDto[]>('list_collections')
+      setCollections(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri])
+
   useEffect(() => {
     if (isTauri) {
       loadManagedSkills()
       loadTags()
+      loadCollections()
     }
-  }, [isTauri, loadManagedSkills, loadTags])
+  }, [isTauri, loadManagedSkills, loadTags, loadCollections])
+
+  // Refresh the collections list whenever the underlying skills change (install,
+  // delete, assign, rename, etc). This keeps the series landing counts in sync
+  // without touching every operation site.
+  useEffect(() => {
+    if (isTauri) {
+      loadCollections()
+    }
+  }, [isTauri, loadCollections, managedSkills])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -794,11 +822,25 @@ function App() {
     [skillScopeState],
   )
 
+  const isSearching = searchQuery.trim().length > 0
+  // 搜索时拍平：忽略系列过滤，直接在所有 skill 中匹配。
+  const showCollectionsLanding = collectionView === 'series' && !isSearching
+
   const visibleSkills = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     const selectedTagSet = new Set(selectedTagIds)
     const hasTagFilter = selectedTagIds.length > 0 || includeUntagged
+    // 仅在非搜索、且已进入某个系列时按系列过滤
+    const applyCollectionFilter = collectionView === 'skills' && !query
     const filtered = managedSkills.filter((skill) => {
+      if (applyCollectionFilter) {
+        if (activeCollection === null) {
+          // 未分组：collection 为 null / 空
+          if (skill.collection && skill.collection.trim() !== '') return false
+        } else if (skill.collection !== activeCollection) {
+          return false
+        }
+      }
       if (scopeFilter !== 'all' && getSkillScope(skill) !== scopeFilter) return false
       if (hasTagFilter) {
         const matchesSelectedTag = skill.tags.some((tag) => selectedTagSet.has(tag.id))
@@ -821,6 +863,8 @@ function App() {
     })
     return sorted
   }, [
+    activeCollection,
+    collectionView,
     getSkillScope,
     includeUntagged,
     managedSkills,
@@ -829,6 +873,12 @@ function App() {
     selectedTagIds,
     sortBy,
   ])
+
+  const uncategorizedCount = useMemo(
+    () =>
+      managedSkills.filter((s) => !s.collection || s.collection.trim() === '').length,
+    [managedSkills],
+  )
   const untaggedCount = useMemo(
     () => managedSkills.filter((skill) => skill.tags.length === 0).length,
     [managedSkills],
@@ -2011,6 +2061,111 @@ function App() {
       setActionMessage(null)
     }
   }, [invokeTauri, loadManagedSkills, loadTags, pendingDeleteTag, t])
+
+  // ===== Collection (series) actions =====
+
+  const handleOpenCollection = useCallback((name: string | null) => {
+    setActiveCollection(name)
+    setCollectionView('skills')
+    setBulkMode(false)
+    setBulkSelectedIds([])
+  }, [])
+
+  const handleBackToCollections = useCallback(() => {
+    setActiveCollection(null)
+    setCollectionView('series')
+  }, [])
+
+  const handleAssignCollection = useCallback(
+    (skillIds: string[]) => {
+      if (skillIds.length === 0) return
+      setAssignCollectionSkillIds(skillIds)
+    },
+    [],
+  )
+
+  const handleCloseAssignCollection = useCallback(() => {
+    if (!loading) setAssignCollectionSkillIds(null)
+  }, [loading])
+
+  const handleConfirmAssignCollection = useCallback(
+    async (skillIds: string[], collection: string | null) => {
+      try {
+        setLoading(true)
+        setLoadingStartAt(Date.now())
+        setActionMessage(t('actions.assigningCollection'))
+        await invokeTauri('set_skills_collection', {
+          skillIds,
+          collection,
+        })
+        await loadManagedSkills()
+        await loadCollections()
+        setAssignCollectionSkillIds(null)
+        setBulkMode(false)
+        setBulkSelectedIds([])
+        setSuccessToastMessage(t('collectionAssigned'))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLoading(false)
+        setLoadingStartAt(null)
+        setActionMessage(null)
+      }
+    },
+    [invokeTauri, loadCollections, loadManagedSkills, t],
+  )
+
+  const handleRenameCollection = useCallback(
+    async (oldName: string, newName: string) => {
+      const trimmed = newName.trim()
+      if (!trimmed || trimmed === oldName) return
+      try {
+        setLoading(true)
+        setLoadingStartAt(Date.now())
+        setActionMessage(t('actions.renamingCollection'))
+        await invokeTauri('rename_collection', {
+          oldName,
+          newName: trimmed,
+        })
+        if (activeCollection === oldName) setActiveCollection(trimmed)
+        await loadManagedSkills()
+        await loadCollections()
+        setSuccessToastMessage(t('collectionRenamed'))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLoading(false)
+        setLoadingStartAt(null)
+        setActionMessage(null)
+      }
+    },
+    [activeCollection, invokeTauri, loadCollections, loadManagedSkills, t],
+  )
+
+  const handleClearCollection = useCallback(
+    async (name: string) => {
+      try {
+        setLoading(true)
+        setLoadingStartAt(Date.now())
+        setActionMessage(t('actions.clearingCollection'))
+        await invokeTauri('clear_collection', { name })
+        if (activeCollection === name) {
+          setActiveCollection(null)
+          setCollectionView('series')
+        }
+        await loadManagedSkills()
+        await loadCollections()
+        setSuccessToastMessage(t('collectionCleared'))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLoading(false)
+        setLoadingStartAt(null)
+        setActionMessage(null)
+      }
+    },
+    [activeCollection, invokeTauri, loadCollections, loadManagedSkills, t],
+  )
 
   const handleOpenEditTags = useCallback((skill: ManagedSkill) => {
     setTagEditorSkill(skill)
@@ -3316,29 +3471,60 @@ function App() {
               onToggleBulkMode={handleToggleBulkMode}
               t={t}
             />
-            <SkillsList
-              plan={plan}
-              visibleSkills={visibleSkills}
-              installedTools={installedTools}
-              loading={loading}
-              bulkMode={bulkMode}
-              selectedSkillIds={bulkSelectedIds}
-              getGithubInfo={getGithubInfo}
-              getSkillSourceLabel={getSkillSourceLabel}
-              formatRelative={formatRelative}
-              onReviewImport={handleReviewImport}
-              onUpdateSkill={handleUpdateSkill}
-              onDeleteSkill={handleDeletePrompt}
-              onToggleSkillEnabled={handleToggleSkillEnabled}
-              onToggleTool={handleToggleToolForSkill}
-              onOpenScope={handleOpenScope}
-              onOpenDetail={handleOpenDetail}
-              onEditTags={handleOpenEditTags}
-              onToggleBulkSelection={handleToggleBulkSelection}
-              getSkillScope={getSkillScope}
-              getSkillProjects={getSkillProjects}
-              t={t}
-            />
+            {showCollectionsLanding ? (
+              <CollectionsList
+                collections={collections}
+                uncategorizedCount={uncategorizedCount}
+                formatRelative={formatRelative}
+                onOpenCollection={handleOpenCollection}
+                onRenameCollection={handleRenameCollection}
+                onClearCollection={handleClearCollection}
+                t={t}
+              />
+            ) : (
+              <>
+                {collectionView === 'skills' && !isSearching ? (
+                  <div className="collection-breadcrumb">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={handleBackToCollections}
+                    >
+                      ← {t('backToCollections')}
+                    </button>
+                    <span className="collection-breadcrumb-name">
+                      {activeCollection === null
+                        ? t('uncategorizedCollection')
+                        : activeCollection}
+                    </span>
+                  </div>
+                ) : null}
+                <SkillsList
+                  plan={plan}
+                  visibleSkills={visibleSkills}
+                  installedTools={installedTools}
+                  loading={loading}
+                  bulkMode={bulkMode}
+                  selectedSkillIds={bulkSelectedIds}
+                  getGithubInfo={getGithubInfo}
+                  getSkillSourceLabel={getSkillSourceLabel}
+                  formatRelative={formatRelative}
+                  onReviewImport={handleReviewImport}
+                  onUpdateSkill={handleUpdateSkill}
+                  onDeleteSkill={handleDeletePrompt}
+                  onToggleSkillEnabled={handleToggleSkillEnabled}
+                  onToggleTool={handleToggleToolForSkill}
+                  onOpenScope={handleOpenScope}
+                  onOpenDetail={handleOpenDetail}
+                  onEditTags={handleOpenEditTags}
+                  onAssignCollection={(skill) => handleAssignCollection([skill.id])}
+                  onToggleBulkSelection={handleToggleBulkSelection}
+                  getSkillScope={getSkillScope}
+                  getSkillProjects={getSkillProjects}
+                  t={t}
+                />
+              </>
+            )}
             {bulkMode ? (
               <div className="bulk-action-bar">
                 <div className="bulk-action-copy">
@@ -3363,6 +3549,14 @@ function App() {
                     disabled={loading || bulkSelectedIds.length === 0}
                   >
                     {t('bulk.tags')}
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => handleAssignCollection(bulkSelectedIds)}
+                    disabled={loading || bulkSelectedIds.length === 0}
+                  >
+                    {t('bulk.assignCollection')}
                   </button>
                   <button
                     className="btn btn-secondary"
@@ -3641,6 +3835,20 @@ function App() {
         toolsLabelText={newlyInstalledToolsText}
         onLater={handleCloseNewTools}
         onSyncAll={handleSyncAllNewTools}
+        t={t}
+      />
+
+      <AssignCollectionModal
+        open={assignCollectionSkillIds !== null}
+        loading={loading}
+        skillCount={assignCollectionSkillIds?.length ?? 0}
+        collections={collections}
+        onCancel={handleCloseAssignCollection}
+        onConfirm={(collection) => {
+          if (assignCollectionSkillIds) {
+            void handleConfirmAssignCollection(assignCollectionSkillIds, collection)
+          }
+        }}
         t={t}
       />
 

@@ -28,6 +28,7 @@ fn make_skill(id: &str, name: &str, central_path: &str, updated_at: i64) -> Skil
         last_seen_at: 1,
         enabled: true,
         status: "ok".to_string(),
+        collection: None,
     }
 }
 
