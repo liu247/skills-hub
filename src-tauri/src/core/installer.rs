@@ -481,6 +481,198 @@ const SKILL_SCAN_BASES: [&str; 5] = [
     ".claude/skills",
 ];
 
+/// A companion file associated with a multi-host dist skill (e.g. a Claude Code slash
+/// command or a Codex prompt). These files must be copied alongside the skill itself
+/// to the appropriate host location for the skill to be fully functional.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompanionFile {
+    /// Path relative to the repo root, e.g. "dist/claude/commands/paperspine.md".
+    pub source_rel: String,
+    /// Skills Hub tool key that this companion targets (e.g. "claude_code", "codex").
+    pub tool_key: String,
+    /// Where the file goes relative to the tool's home marker.
+    /// e.g. ".claude/commands/paperspine.md" or ".codex/prompts/paperspine.md".
+    pub target_rel: String,
+}
+
+/// Manifest for a repository that follows the "multi-host dist" layout, where the
+/// same logical skill is fanned out under `dist/<host>/skills/...` for several hosts,
+/// often with companion command/prompt files per host.
+///
+/// The prototype is PaperSpine v4 (WUBING2023/PaperSpine).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiHostDistManifest {
+    /// The canonical source path (relative to repo root) that Skills Hub should
+    /// treat as "the skill" for central-repo storage and cross-tool sync.
+    ///
+    /// We prefer `dist/claude/skills/<name>` when available because it's the version
+    /// already tuned for Claude Code, and falls back to any other host or `src/skill`.
+    pub canonical_source_rel: String,
+    /// The user-facing skill name (derived from SKILL.md frontmatter or dir name).
+    pub skill_name: String,
+    /// Extra files this bundle expects to install per host (slash commands, prompts).
+    pub companion_files: Vec<CompanionFile>,
+}
+
+/// Known dist host prefixes and how they map to Skills Hub tool keys.
+/// If a repo's `dist/<prefix>/skills/**/SKILL.md` exists we consider that host present.
+const MULTI_HOST_DIST_PREFIXES: &[(&str, &str)] = &[
+    ("claude", "claude_code"),
+    ("codex", "codex"),
+    ("openclaw", "openclaw"),
+    ("hermes", "hermes_agent"),
+];
+
+/// Recursively find the first (or all) SKILL.md-hosting dir under `root` (up to a
+/// small depth limit) and return the dirs where each SKILL.md was found.
+fn find_skill_dirs_under(root: &Path, max_depth: usize) -> Vec<PathBuf> {
+    let mut acc = Vec::new();
+    fn walk(path: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>) {
+        if depth > max {
+            return;
+        }
+        if path.join("SKILL.md").is_file() {
+            out.push(path.to_path_buf());
+            return;
+        }
+        if let Ok(rd) = std::fs::read_dir(path) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    walk(&p, depth + 1, max, out);
+                }
+            }
+        }
+    }
+    walk(root, 0, max_depth, &mut acc);
+    acc
+}
+
+/// Detect whether the repo follows the "multi-host dist" layout (see docs on
+/// [`MultiHostDistManifest`]). Returns `None` when the layout doesn't match.
+///
+/// Requirements to be recognized:
+///   1. Repo has a top-level `dist/` directory.
+///   2. `dist/` contains at least 2 known host prefix subdirs, each with a
+///      `skills/**/SKILL.md` somewhere inside.
+///   3. All discovered skill directory names are the same (single logical skill).
+pub fn detect_multi_host_dist_layout(repo_dir: &Path) -> Option<MultiHostDistManifest> {
+    let dist_dir = repo_dir.join("dist");
+    if !dist_dir.is_dir() {
+        return None;
+    }
+
+    let mut skill_name_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut per_host_skill_path: std::collections::HashMap<String, PathBuf> =
+        std::collections::HashMap::new();
+    let mut host_prefixes_present: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut companion_files: Vec<CompanionFile> = Vec::new();
+
+    for (prefix, tool_key) in MULTI_HOST_DIST_PREFIXES {
+        let host_dir = dist_dir.join(prefix);
+        if !host_dir.is_dir() {
+            continue;
+        }
+
+        // Look for skills under dist/<prefix>/skills/, allowing an optional
+        // intermediate category dir (e.g. dist/hermes/skills/academic-writing/paper-spine).
+        let skills_dir = host_dir.join("skills");
+        let mut found_here = false;
+        if skills_dir.is_dir() {
+            for skill_dir in find_skill_dirs_under(&skills_dir, 3) {
+                let name = skill_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if name.is_empty() || name.starts_with('.') {
+                    continue;
+                }
+                skill_name_set.insert(name.clone());
+                per_host_skill_path
+                    .entry((*prefix).to_string())
+                    .or_insert(skill_dir);
+                found_here = true;
+            }
+        }
+
+        if found_here {
+            host_prefixes_present.insert((*prefix).to_string());
+        }
+
+        // Companion locations we currently understand.
+        for (kind_dir, target_kind) in [("commands", "commands"), ("prompts", "prompts")] {
+            let d = host_dir.join(kind_dir);
+            if !d.is_dir() {
+                continue;
+            }
+            if let Ok(rd) = std::fs::read_dir(&d) {
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if p.extension().map(|e| e == "md").unwrap_or(false) {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        let source_rel = p
+                            .strip_prefix(repo_dir)
+                            .unwrap_or(&p)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        let target_rel = match *prefix {
+                            "claude" => format!(".claude/{}/{}", target_kind, file_name),
+                            "codex" => format!(".codex/{}/{}", target_kind, file_name),
+                            _ => format!(".{}/{}/{}", prefix, target_kind, file_name),
+                        };
+                        companion_files.push(CompanionFile {
+                            source_rel,
+                            tool_key: (*tool_key).to_string(),
+                            target_rel,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Recognition thresholds: at least 2 hosts and exactly 1 skill name.
+    if host_prefixes_present.len() < 2 {
+        return None;
+    }
+    if skill_name_set.len() != 1 {
+        return None;
+    }
+    let skill_name = skill_name_set.into_iter().next().unwrap();
+
+    // Pick canonical source: prefer claude → codex → any other, then fall back to src/skill.
+    let canonical_source_rel = ["claude", "codex", "openclaw", "hermes"]
+        .iter()
+        .find_map(|k| {
+            per_host_skill_path.get(*k).map(|p| {
+                p.strip_prefix(repo_dir)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+        })
+        .or_else(|| {
+            let src_skill = repo_dir.join("src").join("skill");
+            if src_skill.join("SKILL.md").is_file() {
+                Some("src/skill".to_string())
+            } else {
+                None
+            }
+        })?;
+
+    Some(MultiHostDistManifest {
+        canonical_source_rel,
+        skill_name,
+        companion_files,
+    })
+}
+
 /// Check if a directory is a valid skill (has SKILL.md or is under .claude/skills/).
 fn is_skill_dir(p: &Path) -> bool {
     p.is_dir() && (p.join("SKILL.md").exists() || is_claude_skill_dir(p))
@@ -953,6 +1145,27 @@ pub fn list_git_skills<R: tauri::Runtime>(
     )?;
 
     let mut out: Vec<GitSkillCandidate> = Vec::new();
+
+    // Fast path: repo is a multi-host dist bundle (e.g. PaperSpine v4).
+    // Collapse the 4 host copies to a single candidate pointing at the canonical
+    // source, unless the user explicitly targeted a subpath.
+    if parsed.subpath.is_none() {
+        if let Some(manifest) = detect_multi_host_dist_layout(&repo_dir) {
+            let skill_dir = repo_dir.join(&manifest.canonical_source_rel);
+            let (name, desc) = extract_skill_info(&skill_dir, &repo_dir);
+            let display_name = if name.is_empty() {
+                manifest.skill_name.clone()
+            } else {
+                name
+            };
+            out.push(GitSkillCandidate {
+                name: display_name,
+                description: desc,
+                subpath: manifest.canonical_source_rel.clone(),
+            });
+            return Ok(out);
+        }
+    }
 
     // If user provided a folder URL, treat it as a single candidate.
     if let Some(subpath) = &parsed.subpath {

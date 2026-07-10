@@ -836,3 +836,146 @@ fn collect_skill_dirs_deduplicates_known_root_containers() {
     assert_eq!(dirs.len(), 1);
     assert!(dirs[0].ends_with("skills/technical-writer"));
 }
+
+// ============================================================================
+// Multi-host dist layout detection (PaperSpine v4 style)
+// ============================================================================
+
+fn write_skill(dir: &Path, name: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join("SKILL.md"),
+        format!(
+            "---\nname: {}\ndescription: Test skill\n---\n\nBody\n",
+            name
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn detect_multi_host_dist_recognizes_paperspine_layout() {
+    let repo = tempfile::tempdir().unwrap();
+    write_skill(
+        &repo.path().join("dist/claude/skills/paper-spine"),
+        "paper-spine",
+    );
+    write_skill(
+        &repo.path().join("dist/codex/skills/paper-spine"),
+        "paper-spine",
+    );
+    write_skill(
+        &repo.path().join("dist/openclaw/skills/paper-spine"),
+        "paper-spine",
+    );
+    // Nested category dir (Hermes puts it under academic-writing/paper-spine)
+    write_skill(
+        &repo
+            .path()
+            .join("dist/hermes/skills/academic-writing/paper-spine"),
+        "paper-spine",
+    );
+    // Companion files
+    fs::create_dir_all(repo.path().join("dist/claude/commands")).unwrap();
+    fs::write(
+        repo.path().join("dist/claude/commands/paperspine.md"),
+        "# /paperspine\n",
+    )
+    .unwrap();
+    fs::create_dir_all(repo.path().join("dist/codex/prompts")).unwrap();
+    fs::write(
+        repo.path().join("dist/codex/prompts/paperspine.md"),
+        "# codex prompt\n",
+    )
+    .unwrap();
+    // Ignored src/ (present but not the canonical for this test)
+    write_skill(&repo.path().join("src/skill"), "paper-spine");
+
+    let manifest = super::detect_multi_host_dist_layout(repo.path())
+        .expect("should detect multi-host dist layout");
+
+    assert_eq!(manifest.skill_name, "paper-spine");
+    // Prefers claude version as canonical.
+    assert_eq!(
+        manifest.canonical_source_rel,
+        "dist/claude/skills/paper-spine"
+    );
+
+    // Companion files should be captured for claude and codex.
+    let claude_companions: Vec<_> = manifest
+        .companion_files
+        .iter()
+        .filter(|c| c.tool_key == "claude_code")
+        .collect();
+    assert_eq!(claude_companions.len(), 1);
+    assert_eq!(
+        claude_companions[0].source_rel,
+        "dist/claude/commands/paperspine.md"
+    );
+    assert_eq!(
+        claude_companions[0].target_rel,
+        ".claude/commands/paperspine.md"
+    );
+
+    let codex_companions: Vec<_> = manifest
+        .companion_files
+        .iter()
+        .filter(|c| c.tool_key == "codex")
+        .collect();
+    assert_eq!(codex_companions.len(), 1);
+    assert_eq!(
+        codex_companions[0].source_rel,
+        "dist/codex/prompts/paperspine.md"
+    );
+    assert_eq!(
+        codex_companions[0].target_rel,
+        ".codex/prompts/paperspine.md"
+    );
+}
+
+#[test]
+fn detect_multi_host_dist_falls_back_to_src_when_no_claude_or_codex() {
+    // Only hermes and openclaw present.
+    let repo = tempfile::tempdir().unwrap();
+    write_skill(
+        &repo.path().join("dist/openclaw/skills/paper-spine"),
+        "paper-spine",
+    );
+    write_skill(
+        &repo.path().join("dist/hermes/skills/paper-spine"),
+        "paper-spine",
+    );
+    let manifest =
+        super::detect_multi_host_dist_layout(repo.path()).expect("should detect openclaw+hermes");
+    assert_eq!(manifest.skill_name, "paper-spine");
+    // Falls to openclaw (first in priority order among what's present).
+    assert_eq!(
+        manifest.canonical_source_rel,
+        "dist/openclaw/skills/paper-spine"
+    );
+}
+
+#[test]
+fn detect_multi_host_dist_rejects_single_host() {
+    // Only one host present → not a multi-host bundle.
+    let repo = tempfile::tempdir().unwrap();
+    write_skill(&repo.path().join("dist/claude/skills/foo"), "foo");
+    assert!(super::detect_multi_host_dist_layout(repo.path()).is_none());
+}
+
+#[test]
+fn detect_multi_host_dist_rejects_multiple_different_skills() {
+    // Two hosts but different skill names → not our pattern.
+    let repo = tempfile::tempdir().unwrap();
+    write_skill(&repo.path().join("dist/claude/skills/foo"), "foo");
+    write_skill(&repo.path().join("dist/codex/skills/bar"), "bar");
+    assert!(super::detect_multi_host_dist_layout(repo.path()).is_none());
+}
+
+#[test]
+fn detect_multi_host_dist_rejects_repo_without_dist() {
+    // A plain single-skill repo — no dist/ at all.
+    let repo = tempfile::tempdir().unwrap();
+    write_skill(&repo.path().join("skills/my-skill"), "my-skill");
+    assert!(super::detect_multi_host_dist_layout(repo.path()).is_none());
+}
