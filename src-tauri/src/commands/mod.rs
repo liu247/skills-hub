@@ -1229,6 +1229,11 @@ pub struct UpdateResultDto {
     pub content_hash: Option<String>,
     pub source_revision: Option<String>,
     pub updated_targets: Vec<String>,
+    pub changed: bool,
+    /// If populated, the update was NOT applied because the upstream layout
+    /// changed in ways Skills Hub can't reconcile automatically. The frontend
+    /// should show a "reinstall / force update / cancel" prompt.
+    pub structural_change: Option<crate::core::installer::StructuralChangeReport>,
 }
 
 #[tauri::command]
@@ -1247,11 +1252,164 @@ pub async fn update_managed_skill(
             content_hash: res.content_hash,
             source_revision: res.source_revision,
             updated_targets: res.updated_targets,
+            changed: res.changed,
+            structural_change: res.structural_change,
         })
     })
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+/// Force-update variant: bypass the structural-change guard and attempt to
+/// migrate the install to the new upstream layout (used by the "force update"
+/// path of the structural-change modal).
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn force_update_managed_skill(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    skillId: String,
+) -> Result<UpdateResultDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let res = crate::core::installer::update_managed_skill_from_source_with_options(
+            &app, &store, &skillId, true,
+        )?;
+        Ok::<_, anyhow::Error>(UpdateResultDto {
+            skill_id: res.skill_id,
+            name: res.name,
+            content_hash: res.content_hash,
+            source_revision: res.source_revision,
+            updated_targets: res.updated_targets,
+            changed: res.changed,
+            structural_change: res.structural_change,
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+/// Full reinstall path: wipe everything Skills Hub owns for this skill (central
+/// dir, companions, target directories) and reinstall from the recorded git
+/// source. Preserves collection, tags and enabled state. Returns the previous
+/// target list so the frontend can re-sync to the same tools.
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn reinstall_managed_skill(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    skillId: String,
+) -> Result<ReinstallResultDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let record = store
+            .get_skill_by_id(&skillId)?
+            .ok_or_else(|| anyhow::anyhow!("skill not found"))?;
+        if record.source_type != "git" {
+            anyhow::bail!("reinstall is currently only supported for git-sourced skills");
+        }
+        let repo_url = record
+            .source_ref
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("skill has no source_ref"))?;
+
+        // Snapshot state we want to restore after reinstall.
+        let saved_name = record.name.clone();
+        let saved_collection = record.collection.clone();
+        let saved_enabled = record.enabled;
+        let saved_tag_ids: Vec<i64> = store
+            .get_skill_tags(&skillId)?
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        let saved_targets: Vec<PreviousTargetDto> = store
+            .list_skill_targets(&skillId)?
+            .into_iter()
+            .filter(|t| t.status != "disabled")
+            .map(|t| PreviousTargetDto {
+                tool: t.tool,
+                scope: t.scope,
+                project_path: t.project_path,
+            })
+            .collect();
+
+        // Cleanup phase: companions on disk + DB, target folders on disk,
+        // central skill dir, DB skill row.
+        let central_path = std::path::PathBuf::from(&record.central_path);
+        if let Some(central_root) = central_path.parent() {
+            let _ = crate::core::companions::cleanup_all_companions(
+                &store,
+                &skillId,
+                &record.name,
+                central_root,
+            );
+        }
+        for t in store.list_skill_targets(&skillId)? {
+            let _ = remove_path_any(&t.target_path);
+        }
+        if central_path.exists() {
+            std::fs::remove_dir_all(&central_path).ok();
+        }
+        store.delete_skill(&skillId)?;
+
+        // Reinstall by discovering the (possibly new) canonical subpath.
+        let candidates = crate::core::installer::list_git_skills(&app, &store, &repo_url)?;
+        let candidate = candidates
+            .iter()
+            .find(|c| c.name == saved_name)
+            .or_else(|| candidates.first())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no installable skill found in refreshed source of {}",
+                    repo_url
+                )
+            })?;
+
+        let install_result = crate::core::installer::install_git_skill_from_selection(
+            &app,
+            &store,
+            &repo_url,
+            &candidate.subpath,
+            Some(saved_name.clone()),
+        )?;
+
+        // Restore user metadata onto the freshly-inserted record.
+        if let Some(mut fresh) = store.get_skill_by_id(&install_result.skill_id)? {
+            fresh.collection = saved_collection.or(fresh.collection);
+            fresh.enabled = saved_enabled;
+            store.upsert_skill(&fresh)?;
+        }
+        if !saved_tag_ids.is_empty() {
+            let _ = store.set_skill_tags(&install_result.skill_id, &saved_tag_ids);
+        }
+
+        Ok::<_, anyhow::Error>(ReinstallResultDto {
+            skill_id: install_result.skill_id,
+            name: install_result.name,
+            central_path: install_result.central_path.to_string_lossy().to_string(),
+            previous_targets: saved_targets,
+        })
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReinstallResultDto {
+    pub skill_id: String,
+    pub name: String,
+    pub central_path: String,
+    pub previous_targets: Vec<PreviousTargetDto>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PreviousTargetDto {
+    pub tool: String,
+    pub scope: String,
+    pub project_path: Option<String>,
 }
 
 #[tauri::command]

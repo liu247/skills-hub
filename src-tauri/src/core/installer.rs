@@ -679,6 +679,85 @@ pub fn detect_multi_host_dist_layout(repo_dir: &Path) -> Option<MultiHostDistMan
     })
 }
 
+/// Assemble a diff of the old central directory vs the new upstream source,
+/// plus how the companion sets differ. Used to produce a helpful
+/// [`StructuralChangeReport`] shown in the "reinstall or force" modal.
+///
+/// This is intentionally shallow (top-level entries only) — we're producing a
+/// warning summary, not a full manifest diff.
+fn build_structural_change_report(
+    record: &SkillRecord,
+    old_central: &Path,
+    new_repo: &Path,
+    new_manifest: Option<&MultiHostDistManifest>,
+    kind: &str,
+    summary: &str,
+) -> StructuralChangeReport {
+    let old_entries = list_top_level_names(old_central);
+    // "new source" reference set: for a multi-host dist bundle we look at the
+    // canonical source directory; otherwise we look at repo root.
+    let new_ref: PathBuf = match new_manifest {
+        Some(m) => new_repo.join(&m.canonical_source_rel),
+        None => new_repo.to_path_buf(),
+    };
+    let new_entries = list_top_level_names(&new_ref);
+
+    let removed_paths: Vec<String> = old_entries
+        .iter()
+        .filter(|n| !new_entries.contains(n))
+        .cloned()
+        .collect();
+    let added_paths: Vec<String> = new_entries
+        .iter()
+        .filter(|n| !old_entries.contains(n))
+        .cloned()
+        .collect();
+
+    let new_companion_tools: Vec<String> = new_manifest
+        .map(|m| {
+            let mut v: Vec<String> = m
+                .companion_files
+                .iter()
+                .map(|c| c.tool_key.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            v.sort();
+            v
+        })
+        .unwrap_or_default();
+
+    let suggested_new_subpath = new_manifest.map(|m| m.canonical_source_rel.clone());
+
+    // We don't currently pull previous_companion_tools from the DB here to
+    // keep this pure-fn-friendly; the commands layer can enrich the DTO if
+    // needed. Leave as an empty placeholder.
+    StructuralChangeReport {
+        kind: kind.to_string(),
+        summary: format!("{} (skill: {})", summary, record.name),
+        removed_paths,
+        added_paths,
+        new_companion_tools,
+        previous_companion_tools: Vec::new(),
+        suggested_new_subpath,
+    }
+}
+
+fn list_top_level_names(dir: &Path) -> Vec<String> {
+    let mut v = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            v.push(name);
+        }
+    }
+    v.sort();
+    v
+}
+
 /// Check if a directory is a valid skill (has SKILL.md or is under .claude/skills/).
 fn is_skill_dir(p: &Path) -> bool {
     p.is_dir() && (p.join("SKILL.md").exists() || is_claude_skill_dir(p))
@@ -849,12 +928,53 @@ pub struct UpdateResult {
     /// True when the source produced content that actually differs from what we have on disk.
     /// False when the check ran successfully but nothing needed to change (unchanged skill).
     pub changed: bool,
+    /// Populated (only when `!force`) if the upstream layout diverges from the
+    /// installed skill in ways that make a normal in-place update unsafe.
+    /// When set, the update did NOT perform any destructive action and the
+    /// caller should surface the report to the user (typically via a
+    /// "reinstall or force update" prompt).
+    pub structural_change: Option<StructuralChangeReport>,
+}
+
+/// A summary of how the upstream layout differs from what was installed,
+/// serialized to the frontend to power the "structural change" modal.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StructuralChangeReport {
+    /// Machine-readable kind of divergence.
+    pub kind: String,
+    /// Human-readable one-liner explaining the situation.
+    pub summary: String,
+    /// Top-level entries that used to exist but are gone in the new source.
+    pub removed_paths: Vec<String>,
+    /// Top-level entries that appear in the new source but not in the old.
+    pub added_paths: Vec<String>,
+    /// Companion tool_keys the new source targets.
+    pub new_companion_tools: Vec<String>,
+    /// Companion tool_keys we recorded from the previous install.
+    pub previous_companion_tools: Vec<String>,
+    /// New canonical subpath if we can propose one (typical case: new source
+    /// moved this skill to `dist/claude/skills/<name>` under a multi-host
+    /// bundle). Empty when we can't propose anything.
+    pub suggested_new_subpath: Option<String>,
 }
 
 pub fn update_managed_skill_from_source<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     store: &SkillStore,
     skill_id: &str,
+) -> Result<UpdateResult> {
+    update_managed_skill_from_source_with_options(app, store, skill_id, false)
+}
+
+/// Full update path with an explicit `force` flag. When `force=false` (default),
+/// we detect layout-level divergence up-front and return without touching disk.
+/// When `force=true`, we attempt to migrate the install to the new layout
+/// (used by the "force update" path of the structural-change dialog).
+pub fn update_managed_skill_from_source_with_options<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    store: &SkillStore,
+    skill_id: &str,
+    force: bool,
 ) -> Result<UpdateResult> {
     let record = store
         .get_skill_by_id(skill_id)?
@@ -905,6 +1025,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
                             source_revision: record.source_revision,
                             updated_targets: Vec::new(),
                             changed: false,
+                            structural_change: None,
                         });
                     }
                 }
@@ -969,6 +1090,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
                     source_revision: new_revision,
                     updated_targets: Vec::new(),
                     changed: false,
+                    structural_change: None,
                 });
             }
         }
@@ -1007,13 +1129,60 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
                 let _ = store.upsert_skill(&patched);
             }
         }
-        let copy_src = if let Some(subpath) = &resolved_subpath {
+        let mut copy_src = if let Some(subpath) = &resolved_subpath {
             repo_dir.join(subpath)
         } else {
             repo_dir.clone()
         };
+
+        // Structural-change interception:
+        // If the previously-recorded subpath no longer exists in the new source,
+        // this is almost always a repo restructure (e.g. PaperSpine v3 -> v4).
+        // Under `!force` we bail out with a machine-readable report so the UI
+        // can prompt the user to reinstall or force-update. Under `force=true`
+        // we try to migrate to a multi-host dist canonical path if the manifest
+        // recognises the new layout.
         if !copy_src.exists() {
-            anyhow::bail!("path not found in repo: {:?}", copy_src);
+            let manifest = detect_multi_host_dist_layout(&repo_dir);
+            if !force {
+                let report = build_structural_change_report(
+                    &record,
+                    &central_path,
+                    &repo_dir,
+                    manifest.as_ref(),
+                    "subpath_missing",
+                    &format!(
+                        "该 Skill 之前安装的子路径 `{}` 在新版本仓库中不存在。仓库很可能重构了整体布局。",
+                        resolved_subpath.as_deref().unwrap_or(".")
+                    ),
+                );
+                return Ok(UpdateResult {
+                    skill_id: record.id,
+                    name: record.name,
+                    central_path,
+                    content_hash: record.content_hash,
+                    source_revision: new_revision,
+                    updated_targets: Vec::new(),
+                    changed: false,
+                    structural_change: Some(report),
+                });
+            }
+
+            // force=true: try to migrate to canonical multi-host dist location.
+            if let Some(m) = manifest.as_ref() {
+                let candidate = repo_dir.join(&m.canonical_source_rel);
+                if candidate.exists() {
+                    copy_src = candidate;
+                    resolved_subpath = Some(m.canonical_source_rel.clone());
+                    // Persist the migrated subpath for future updates.
+                    let mut patched = record.clone();
+                    patched.source_subpath = resolved_subpath.clone();
+                    let _ = store.upsert_skill(&patched);
+                }
+            }
+            if !copy_src.exists() {
+                anyhow::bail!("path not found in repo: {:?}", copy_src);
+            }
         }
 
         copy_dir_recursive(&copy_src, &staging_dir)
@@ -1109,6 +1278,31 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         }
     }
 
+    // Multi-host dist re-staging: if the new source is a bundle, refresh
+    // staged companions so any subsequent sync_skill_to_tool call picks up
+    // the latest version. Best-effort — failure here does not abort update.
+    if record.source_type == "git" {
+        if let Some(parsed_ref) = record.source_ref.as_deref() {
+            let parsed = parse_github_url(parsed_ref);
+            if let Ok((rd, _)) = clone_to_cache(
+                app,
+                store,
+                &parsed.clone_url,
+                parsed.branch.as_deref(),
+                None,
+            ) {
+                if let Some(manifest) = detect_multi_host_dist_layout(&rd) {
+                    let _ = crate::core::companions::stage_companions_for_skill(
+                        central_path.parent().unwrap_or(&central_path),
+                        &record.name,
+                        &rd,
+                        &manifest,
+                    );
+                }
+            }
+        }
+    }
+
     Ok(UpdateResult {
         skill_id: record.id,
         name: record.name,
@@ -1117,6 +1311,7 @@ pub fn update_managed_skill_from_source<R: tauri::Runtime>(
         source_revision: new_revision,
         updated_targets,
         changed: true,
+        structural_change: None,
     })
 }
 

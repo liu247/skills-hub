@@ -120,12 +120,37 @@ export type ToolConfigDto = {
   custom_tools: CustomToolConfigDto[]
 }
 
+export type StructuralChangeReport = {
+  kind: string
+  summary: string
+  removed_paths: string[]
+  added_paths: string[]
+  new_companion_tools: string[]
+  previous_companion_tools: string[]
+  suggested_new_subpath?: string | null
+}
+
 export type UpdateResultDto = {
   skill_id: string
   name: string
   content_hash?: string | null
   source_revision?: string | null
   updated_targets: string[]
+  changed: boolean
+  structural_change?: StructuralChangeReport | null
+}
+
+export type ReinstallResultDto = {
+  skill_id: string
+  name: string
+  central_path: string
+  previous_targets: PreviousTargetDto[]
+}
+
+export type PreviousTargetDto = {
+  tool: string
+  scope: string
+  project_path?: string | null
 }
 
 export type AutoUpdateConfigDto = {

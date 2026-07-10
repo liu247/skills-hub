@@ -32,6 +32,7 @@ import LocalPickModal from './components/skills/modals/LocalPickModal'
 import ImportModal from './components/skills/modals/ImportModal'
 import NewToolsModal from './components/skills/modals/NewToolsModal'
 import AssignCollectionModal from './components/skills/modals/AssignCollectionModal'
+import StructuralChangeModal from './components/skills/modals/StructuralChangeModal'
 import ScopeSyncModal from './components/skills/modals/ScopeSyncModal'
 import SharedDirModal from './components/skills/modals/SharedDirModal'
 import SettingsPage from './components/skills/SettingsPage'
@@ -65,6 +66,8 @@ import type {
   OnlineSkillDto,
   TagWithCountDto,
   ToolConfigDto,
+  ReinstallResultDto,
+  StructuralChangeReport,
   ToolOption,
   ToolStatusDto,
   UpdateResultDto,
@@ -153,6 +156,10 @@ function App() {
   // 当 collectionView === 'skills' 时生效：字符串 = 具体系列名；null = 未分组
   const [activeCollection, setActiveCollection] = useState<string | null>(null)
   const [assignCollectionSkillIds, setAssignCollectionSkillIds] = useState<string[] | null>(null)
+  const [structuralChange, setStructuralChange] = useState<{
+    skill: ManagedSkill
+    report: StructuralChangeReport
+  } | null>(null)
   const [tagEditorSkill, setTagEditorSkill] = useState<ManagedSkill | null>(null)
   const [pendingDeleteTag, setPendingDeleteTag] = useState<TagWithCountDto | null>(null)
   const [addModalTab, setAddModalTab] = useState<'local' | 'git'>('git')
@@ -3364,7 +3371,13 @@ function App() {
     setError(null)
     try {
       setActionMessage(t('actions.updating', { name: skill.name }))
-      await invokeTauri<UpdateResultDto>('update_managed_skill', { skillId: skill.id })
+      const result = await invokeTauri<UpdateResultDto>('update_managed_skill', { skillId: skill.id })
+      // Structural change → don't proceed, ask user via modal.
+      if (result.structural_change) {
+        setStructuralChange({ skill, report: result.structural_change })
+        setActionMessage(null)
+        return
+      }
       const updatedText = t('status.updated', { name: skill.name })
       setActionMessage(updatedText)
       setSuccessToastMessage(updatedText)
@@ -3380,6 +3393,81 @@ function App() {
     },
     [invokeTauri, loadManagedSkills, t],
   )
+
+  const handleCloseStructuralChange = useCallback(() => {
+    if (!loading) setStructuralChange(null)
+  }, [loading])
+
+  const handleConfirmForceUpdate = useCallback(async () => {
+    if (!structuralChange) return
+    const skill = structuralChange.skill
+    setLoading(true)
+    setLoadingStartAt(Date.now())
+    setError(null)
+    try {
+      setActionMessage(t('actions.forceUpdating', { name: skill.name }))
+      const result = await invokeTauri<UpdateResultDto>('force_update_managed_skill', {
+        skillId: skill.id,
+      })
+      setStructuralChange(null)
+      if (result.structural_change) {
+        // Force couldn't resolve — surface the report again.
+        setStructuralChange({ skill, report: result.structural_change })
+      } else {
+        const text = t('status.updated', { name: skill.name })
+        setSuccessToastMessage(text)
+        await loadManagedSkills()
+      }
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      setError(raw)
+    } finally {
+      setLoading(false)
+      setLoadingStartAt(null)
+      setActionMessage(null)
+    }
+  }, [invokeTauri, loadManagedSkills, structuralChange, t])
+
+  const handleConfirmReinstall = useCallback(async () => {
+    if (!structuralChange) return
+    const skill = structuralChange.skill
+    setLoading(true)
+    setLoadingStartAt(Date.now())
+    setError(null)
+    try {
+      setActionMessage(t('actions.reinstalling', { name: skill.name }))
+      const result = await invokeTauri<ReinstallResultDto>('reinstall_managed_skill', {
+        skillId: skill.id,
+      })
+      // Re-sync to all previously synced tools so the user doesn't lose them.
+      for (const target of result.previous_targets) {
+        try {
+          await invokeTauri('sync_skill_to_tool', {
+            sourcePath: result.central_path,
+            skillId: result.skill_id,
+            tool: target.tool,
+            name: result.name,
+            overwrite: true,
+            scope: target.scope,
+            projectPath: target.project_path ?? null,
+          })
+        } catch (err) {
+          const raw = err instanceof Error ? err.message : String(err)
+          setError(t('reinstall.resyncFailed', { tool: target.tool, error: raw }))
+        }
+      }
+      setStructuralChange(null)
+      setSuccessToastMessage(t('status.reinstalled', { name: skill.name }))
+      await loadManagedSkills()
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      setError(raw)
+    } finally {
+      setLoading(false)
+      setLoadingStartAt(null)
+      setActionMessage(null)
+    }
+  }, [invokeTauri, loadManagedSkills, structuralChange, t])
 
   const handleUpdateSkill = useCallback(
     (skill: ManagedSkill) => {
@@ -3851,6 +3939,17 @@ function App() {
             void handleConfirmAssignCollection(assignCollectionSkillIds, collection)
           }
         }}
+        t={t}
+      />
+
+      <StructuralChangeModal
+        open={structuralChange !== null}
+        loading={loading}
+        skillName={structuralChange?.skill.name ?? ''}
+        report={structuralChange?.report ?? null}
+        onCancel={handleCloseStructuralChange}
+        onReinstall={() => void handleConfirmReinstall()}
+        onForceUpdate={() => void handleConfirmForceUpdate()}
         t={t}
       />
 

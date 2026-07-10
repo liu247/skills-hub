@@ -190,6 +190,24 @@ export const resources = {
       collectionAssigned: 'Series updated.',
       collectionRenamed: 'Series renamed.',
       collectionCleared: 'Series cleared.',
+      // Structural change (multi-host dist repo re-layout)
+      structuralChange: {
+        title: 'Upstream layout changed: {{name}}',
+        description:
+          "The upstream repository has restructured its layout since this skill was installed. To avoid a partial or broken update, Skills Hub paused before touching your files. Choose how to proceed:",
+        removedPaths: 'Paths present locally, absent upstream:',
+        addedPaths: 'Paths added upstream:',
+        suggestedNewSubpath: 'Suggested new source subpath',
+        reinstall: 'Reinstall',
+        reinstallHint:
+          'Wipe local install and reinstall from the new source. Preserves tags, series and enabled state; re-syncs to the same tools.',
+        forceUpdate: 'Force update',
+        forceUpdateHint:
+          'Attempt to update in place using the suggested new subpath. May fail if the migration is too aggressive.',
+      },
+      reinstall: {
+        resyncFailed: 'Reinstall done, but re-sync to {{tool}} failed: {{error}}',
+      },
       back: 'Back',
       discoveredTitle: 'Discovered skills',
       discoveredEmpty: 'Scan your tools to find existing skills to import.',
@@ -516,6 +534,8 @@ export const resources = {
         assigningCollection: 'Assigning series ...',
         renamingCollection: 'Renaming series ...',
         clearingCollection: 'Ungrouping series ...',
+        forceUpdating: 'Force-updating {{name}} ...',
+        reinstalling: 'Reinstalling {{name}} ...',
       },
       status: {
         importCompleted: 'Import completed.',
@@ -527,6 +547,7 @@ export const resources = {
         syncDisabled: 'Sync disabled.',
         syncEnabled: 'Sync enabled.',
         updated: '{{name}} updated.',
+        reinstalled: '{{name}} reinstalled from latest source.',
         gitCacheCleared: 'Git cache cleared ({{count}} removed).',
         installed: 'Installed',
       },
@@ -804,6 +825,23 @@ export const resources = {
       collectionAssigned: '系列已更新。',
       collectionRenamed: '系列已重命名。',
       collectionCleared: '系列已解散。',
+      // 结构变化（多宿主 dist 仓库重构）
+      structuralChange: {
+        title: '上游布局变更：{{name}}',
+        description:
+          '该 Skill 的上游仓库自安装以来已重构了目录布局。为避免半损坏的更新，Skills Hub 已暂停并等你确认。请选择处理方式：',
+        removedPaths: '本地存在、上游已删除的路径：',
+        addedPaths: '上游新增的路径：',
+        suggestedNewSubpath: '推荐的新源路径',
+        reinstall: '重新安装',
+        reinstallHint:
+          '清空本地安装并按新版本重装，保留标签/系列/启用状态，重新同步到相同的工具。',
+        forceUpdate: '强制更新',
+        forceUpdateHint: '按推荐的新源路径原地更新。若变更过大可能会失败。',
+      },
+      reinstall: {
+        resyncFailed: '重装完成，但同步到 {{tool}} 失败：{{error}}',
+      },
       tagDeleted: '标签已删除。',
       tagsUpdated: '标签已更新。',
       tagsApplyFailed: '无法为「{{name}}」应用标签。',
@@ -1112,6 +1150,8 @@ export const resources = {
         assigningCollection: '正在分配系列 ...',
         renamingCollection: '正在重命名系列 ...',
         clearingCollection: '正在解散系列 ...',
+        forceUpdating: '正在强制更新 {{name}} ...',
+        reinstalling: '正在重新安装 {{name}} ...',
       },
       status: {
         importCompleted: '导入完成。',
@@ -1123,6 +1163,7 @@ export const resources = {
         syncDisabled: '已取消同步。',
         syncEnabled: '已同步到工具。',
         updated: '{{name}} 已更新。',
+        reinstalled: '{{name}} 已按最新源重装完成。',
         gitCacheCleared: 'Git 缓存已清理（删除 {{count}} 项）。',
         installed: '已安装',
       },
