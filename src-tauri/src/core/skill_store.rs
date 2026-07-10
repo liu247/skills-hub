@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -81,6 +81,24 @@ CREATE TABLE IF NOT EXISTS skill_tag_links (
   FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
   FOREIGN KEY(tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
 );
+
+-- Companion files (slash commands, prompts) installed alongside a skill for a
+-- specific tool. Used only for skills sourced from "multi-host dist" repos
+-- such as PaperSpine v4, where the repo ships extra entrypoint files that
+-- don't fit under the tool's skills/ directory.
+CREATE TABLE IF NOT EXISTS skill_companions (
+  id TEXT PRIMARY KEY,
+  skill_id TEXT NOT NULL,
+  tool_key TEXT NOT NULL,
+  target_path TEXT NOT NULL,
+  installed_at INTEGER NOT NULL,
+  FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_companions_unique
+  ON skill_companions(skill_id, tool_key, target_path);
+CREATE INDEX IF NOT EXISTS idx_skill_companions_skill_id
+  ON skill_companions(skill_id);
 "#;
 
 #[derive(Clone, Debug)]
@@ -127,6 +145,17 @@ pub struct SkillTargetRecord {
     pub status: String,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
+}
+
+/// A companion file installed alongside a skill for a specific tool.
+/// See [`super::companions`] for the higher-level semantics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillCompanionRecord {
+    pub id: String,
+    pub skill_id: String,
+    pub tool_key: String,
+    pub target_path: String,
+    pub installed_at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,6 +214,9 @@ impl SkillStore {
                 }
                 if user_version < 7 {
                     migrate_collection_to_v7(conn)?;
+                }
+                if user_version < 8 {
+                    migrate_companions_to_v8(conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -759,6 +791,102 @@ impl SkillStore {
         })
     }
 
+    // ---- Companion files (see core::companions) ----
+
+    pub fn upsert_skill_companion(&self, record: &SkillCompanionRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO skill_companions
+                   (id, skill_id, tool_key, target_path, installed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(skill_id, tool_key, target_path) DO UPDATE SET
+                   installed_at = excluded.installed_at",
+                params![
+                    record.id,
+                    record.skill_id,
+                    record.tool_key,
+                    record.target_path,
+                    record.installed_at,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_skill_companions(&self, skill_id: &str) -> Result<Vec<SkillCompanionRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, skill_id, tool_key, target_path, installed_at
+                 FROM skill_companions
+                 WHERE skill_id = ?1
+                 ORDER BY tool_key, target_path",
+            )?;
+            let rows = stmt.query_map(params![skill_id], |row| {
+                Ok(SkillCompanionRecord {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    tool_key: row.get(2)?,
+                    target_path: row.get(3)?,
+                    installed_at: row.get(4)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn list_skill_companions_for_tool(
+        &self,
+        skill_id: &str,
+        tool_key: &str,
+    ) -> Result<Vec<SkillCompanionRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, skill_id, tool_key, target_path, installed_at
+                 FROM skill_companions
+                 WHERE skill_id = ?1 AND tool_key = ?2
+                 ORDER BY target_path",
+            )?;
+            let rows = stmt.query_map(params![skill_id, tool_key], |row| {
+                Ok(SkillCompanionRecord {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    tool_key: row.get(2)?,
+                    target_path: row.get(3)?,
+                    installed_at: row.get(4)?,
+                })
+            })?;
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn delete_skill_companions_for_tool(&self, skill_id: &str, tool_key: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM skill_companions WHERE skill_id = ?1 AND tool_key = ?2",
+                params![skill_id, tool_key],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_all_skill_companions(&self, skill_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM skill_companions WHERE skill_id = ?1",
+                params![skill_id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn update_skill_target_status(
         &self,
         skill_id: &str,
@@ -855,6 +983,25 @@ fn migrate_collection_to_v7(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_companions_to_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS skill_companions (
+           id TEXT PRIMARY KEY,
+           skill_id TEXT NOT NULL,
+           tool_key TEXT NOT NULL,
+           target_path TEXT NOT NULL,
+           installed_at INTEGER NOT NULL,
+           FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE
+         );
+
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_companions_unique
+           ON skill_companions(skill_id, tool_key, target_path);
+         CREATE INDEX IF NOT EXISTS idx_skill_companions_skill_id
+           ON skill_companions(skill_id);",
+    )?;
+    Ok(())
+}
+
 fn normalize_tag_name(name: &str) -> Result<String> {
     let normalized = name.trim().to_string();
     if normalized.is_empty() {
@@ -871,7 +1018,7 @@ fn normalize_collection_name(name: &str) -> Result<String> {
     Ok(normalized)
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap_or_default();

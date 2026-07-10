@@ -2,6 +2,7 @@ pub mod auto_update;
 pub mod cache_cleanup;
 pub mod cancel_token;
 pub mod central_repo;
+pub mod companions;
 pub mod content_hash;
 pub mod featured_skills;
 pub mod git_fetcher;

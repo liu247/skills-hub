@@ -307,6 +307,12 @@ pub fn install_git_skill<R: tauri::Runtime>(
 
     store.upsert_skill(&record)?;
 
+    // NOTE: Companion staging for multi-host dist bundles happens in
+    // install_git_skill_from_selection (the path taken by the modern
+    // list-skills-first flow). This older single-shot install_git_skill
+    // fallback intentionally skips it because its GitHub-archive branch may
+    // not have a full clone available for the manifest scan.
+
     Ok(InstallResult {
         skill_id: record.id,
         name: record.name,
@@ -1545,6 +1551,25 @@ pub fn install_git_skill_from_selection<R: tauri::Runtime>(
         collection: Some(derive_name_from_repo_url(&parsed.clone_url)),
     };
     store.upsert_skill(&record)?;
+
+    // If this is a multi-host dist bundle (PaperSpine v4 and similar), stage
+    // the companion files (Claude commands, Codex prompts, ...) into the
+    // central metadata area. Actual per-tool installation happens later, when
+    // the user syncs this skill to a specific tool via sync_skill_to_tool.
+    if let Some(manifest) = detect_multi_host_dist_layout(&repo_dir) {
+        if let Err(err) = crate::core::companions::stage_companions_for_skill(
+            &central_dir,
+            &record.name,
+            &repo_dir,
+            &manifest,
+        ) {
+            log::warn!(
+                "[installer] companion staging failed for {} (skill installed OK, companions will be missing): {}",
+                record.name,
+                err
+            );
+        }
+    }
 
     Ok(InstallResult {
         skill_id: record.id,

@@ -1006,11 +1006,12 @@ pub async fn sync_skill_to_tool(
 
         // Some tools share the same skills directory; keep DB records consistent across them.
         let group = runtime_tools_sharing_dir(&store, &runtime_tool, scope)?;
+        let mut group_tool_keys: Vec<String> = Vec::with_capacity(group.len());
         for a in group {
             let record = SkillTargetRecord {
                 id: Uuid::new_v4().to_string(),
                 skill_id: skillId.clone(),
-                tool: a.key,
+                tool: a.key.clone(),
                 scope: scope.to_string(),
                 project_path: project_path_for_record.clone(),
                 target_path: result.target_path.to_string_lossy().to_string(),
@@ -1026,6 +1027,37 @@ pub async fn sync_skill_to_tool(
                 synced_at: Some(now_ms()),
             };
             store.upsert_skill_target(&record)?;
+            group_tool_keys.push(a.key);
+        }
+
+        // Install companion files (if any were staged for this skill) for every
+        // tool key that just got synced. Only global scope: project scope is
+        // per-repo and out of the multi-host dist bundle's assumption world.
+        if scope == "global" {
+            if let Some(skill_record) = store.get_skill_by_id(&skillId)? {
+                let central_path = std::path::PathBuf::from(&skill_record.central_path);
+                if let Some(central_root) = central_path.parent() {
+                    if let Some(home) = dirs::home_dir() {
+                        for tk in &group_tool_keys {
+                            if let Err(err) = crate::core::companions::install_companions_for_tool(
+                                &store,
+                                &skillId,
+                                &skill_record.name,
+                                tk,
+                                central_root,
+                                &home,
+                            ) {
+                                log::warn!(
+                                    "[sync_skill_to_tool] companion install failed for {}/{}: {}",
+                                    skill_record.name,
+                                    tk,
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok::<_, anyhow::Error>(SyncResultDto {
@@ -1120,6 +1152,22 @@ pub async fn unsync_skill_from_tool(
                     removed = true;
                 }
                 store.delete_skill_target(&skillId, k, scope, project_path.as_deref())?;
+            }
+        }
+
+        // Remove companion files installed for the tools being un-synced.
+        if scope == "global" {
+            for k in &group_tool_keys {
+                if let Err(err) =
+                    crate::core::companions::uninstall_companions_for_tool(&store, &skillId, k)
+                {
+                    log::warn!(
+                        "[unsync_skill_from_tool] companion uninstall failed for {}/{}: {}",
+                        skillId,
+                        k,
+                        err
+                    );
+                }
             }
         }
 
@@ -1556,9 +1604,28 @@ pub async fn delete_managed_skill(
 
         let record = store.get_skill_by_id(&skillId)?;
         if let Some(skill) = record {
-            let path = std::path::PathBuf::from(skill.central_path);
-            if path.exists() {
-                std::fs::remove_dir_all(&path)?;
+            let central_path = std::path::PathBuf::from(&skill.central_path);
+            let central_root = central_path.parent().map(|p| p.to_path_buf());
+
+            // Full companion cleanup: delete installed files across all tools,
+            // wipe DB rows, remove central staging area.
+            if let Some(root) = central_root {
+                if let Err(err) = crate::core::companions::cleanup_all_companions(
+                    &store,
+                    &skillId,
+                    &skill.name,
+                    &root,
+                ) {
+                    log::warn!(
+                        "[delete_managed_skill] companion cleanup failed for {}: {}",
+                        skill.name,
+                        err
+                    );
+                }
+            }
+
+            if central_path.exists() {
+                std::fs::remove_dir_all(&central_path)?;
             }
             store.delete_skill(&skillId)?;
         }
