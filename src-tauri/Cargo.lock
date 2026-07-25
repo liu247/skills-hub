@@ -96,6 +96,7 @@ dependencies = [
  "git2",
  "hex",
  "junction",
+ "keyring",
  "log",
  "mockito",
  "reqwest",
@@ -110,6 +111,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tempfile",
+ "toml_edit 0.23.10+spec-1.0.0",
  "urlencoding",
  "uuid",
  "walkdir",
@@ -2143,6 +2145,16 @@ dependencies = [
  "bitflags 2.10.0",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
 ]
 
 [[package]]
@@ -4886,6 +4898,7 @@ dependencies = [
  "indexmap 2.13.0",
  "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 0.7.14",
 ]
 

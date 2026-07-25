@@ -37,6 +37,8 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 junction = "1.1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2.1"
+keyring = "3"
+toml_edit = "0.23"
 
 [dev-dependencies]
 tempfile = "3"
