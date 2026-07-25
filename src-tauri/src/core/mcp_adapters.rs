@@ -95,12 +95,7 @@ pub fn sync_host_file(
             merge_codex_toml_config(&existing, &rendered, &server.name, owns_existing_entry)?
         }
         McpHost::Reasonix => {
-            if !existing.trim().is_empty() {
-                anyhow::bail!(
-                    "Reasonix TOML merge is not yet available for existing configuration"
-                );
-            }
-            rendered
+            merge_reasonix_toml_config(&existing, &rendered, &server.name, owns_existing_entry)?
         }
     };
     Ok(McpSyncOutcome {
@@ -133,6 +128,44 @@ pub fn merge_codex_toml_config(
         anyhow::bail!("MCP server name is already used by an unmanaged host entry");
     }
     servers.insert(server_name, toml_edit::Item::Table(replacement_entry));
+    Ok(document.to_string())
+}
+
+pub fn merge_reasonix_toml_config(
+    existing: &str,
+    rendered: &str,
+    server_name: &str,
+    owns_existing_entry: bool,
+) -> Result<String> {
+    let mut document = existing
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse existing Reasonix TOML configuration")?;
+    let replacement = rendered
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse rendered Reasonix TOML configuration")?;
+    let replacement_table = replacement["plugins"]
+        .as_array_of_tables()
+        .and_then(|tables| tables.get(0))
+        .context("rendered Reasonix configuration is missing plugin table")?
+        .clone();
+    let plugins = document["plugins"].or_insert(toml_edit::array());
+    let tables = plugins
+        .as_array_of_tables_mut()
+        .context("plugins must be an array of tables")?;
+    let matching_index = tables
+        .iter()
+        .enumerate()
+        .find_map(|(index, table)| (table["name"].as_str() == Some(server_name)).then_some(index));
+    if let Some(index) = matching_index {
+        if !owns_existing_entry {
+            anyhow::bail!("MCP server name is already used by an unmanaged host entry");
+        }
+        *tables
+            .get_mut(index)
+            .context("missing existing Reasonix plugin table")? = replacement_table;
+    } else {
+        tables.push(replacement_table);
+    }
     Ok(document.to_string())
 }
 

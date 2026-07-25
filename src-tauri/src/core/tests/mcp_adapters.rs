@@ -95,6 +95,32 @@ fn sync_json_host_file_merges_and_creates_backup() {
 }
 
 #[test]
+fn reasonix_merge_preserves_other_plugins_and_protects_unowned_collision() {
+    let existing = "default_model = \"x\"\n[[plugins]]\nname = \"other\"\ncommand = \"other\"\n[[plugins]]\nname = \"github\"\ncommand = \"old\"\n";
+    let replacement = "[[plugins]]\nname = \"github\"\ncommand = \"new\"\n";
+
+    assert!(crate::core::mcp_adapters::merge_reasonix_toml_config(
+        existing,
+        replacement,
+        "github",
+        false
+    )
+    .is_err());
+    let merged = crate::core::mcp_adapters::merge_reasonix_toml_config(
+        existing,
+        replacement,
+        "github",
+        true,
+    )
+    .unwrap();
+    assert!(merged.contains("default_model = \"x\""));
+    assert!(merged.contains("name = \"other\""));
+    assert!(merged.contains("command = \"other\""));
+    assert!(merged.contains("name = \"github\""));
+    assert!(merged.contains("command = \"new\""));
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();
