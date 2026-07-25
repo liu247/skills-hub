@@ -121,6 +121,18 @@ fn reasonix_merge_preserves_other_plugins_and_protects_unowned_collision() {
 }
 
 #[test]
+fn supported_hosts_have_global_config_paths() {
+    for host in [
+        McpHost::Codex,
+        McpHost::ClaudeCode,
+        McpHost::Kiro,
+        McpHost::Reasonix,
+    ] {
+        assert!(crate::core::mcp_adapters::global_config_path(host).is_ok());
+    }
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();

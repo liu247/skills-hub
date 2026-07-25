@@ -18,6 +18,16 @@ pub struct McpSyncOutcome {
     pub backup_path: Option<PathBuf>,
 }
 
+pub fn global_config_path(host: McpHost) -> Result<PathBuf> {
+    let home = dirs::home_dir().context("resolve user home directory for MCP configuration")?;
+    Ok(match host {
+        McpHost::Codex => home.join(".codex/config.toml"),
+        McpHost::ClaudeCode => home.join(".claude.json"),
+        McpHost::Kiro => home.join(".kiro/settings/mcp.json"),
+        McpHost::Reasonix => home.join(".reasonix/config.toml"),
+    })
+}
+
 pub fn render_server(
     host: McpHost,
     server: &McpServerRecord,
