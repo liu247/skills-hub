@@ -55,6 +55,18 @@ fn json_merge_preserves_unmanaged_entries_and_rejects_unowned_collision() {
 }
 
 #[test]
+fn removes_owned_json_server_without_touching_other_configuration() {
+    let existing =
+        r#"{"theme":"dark","mcpServers":{"other":{"command":"other"},"github":{"command":"old"}}}"#;
+
+    let next = crate::core::mcp_adapters::remove_json_host_config(existing, "github").unwrap();
+    let value: serde_json::Value = serde_json::from_str(&next).unwrap();
+    assert_eq!(value["theme"], "dark");
+    assert_eq!(value["mcpServers"]["other"]["command"], "other");
+    assert!(value["mcpServers"].get("github").is_none());
+}
+
+#[test]
 fn codex_toml_merge_preserves_comments_and_rejects_unowned_collision() {
     let existing = "# keep this comment\nmodel = \"gpt\"\n[mcp_servers.other]\ncommand = \"other\"\n[mcp_servers.github]\ncommand = \"old\"\n";
     let replacement = "[mcp_servers.github]\ncommand = \"new\"\n";

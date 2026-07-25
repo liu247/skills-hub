@@ -29,7 +29,9 @@ use crate::core::installer::{
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
-use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
+use crate::core::mcp_adapters::{
+    global_config_path, remove_host_file, sync_host_file, BridgeRuntime, McpHost,
+};
 use crate::core::mcp_discovery::{
     scan_local_mcp_configs_with_secrets_in, without_managed_targets, LocalMcpPlan,
 };
@@ -102,6 +104,8 @@ pub struct LocalMcpImportSelection {
     pub name: String,
     pub host: String,
 }
+
+const MCP_TARGETS: [&str; 4] = ["codex", "claude_code", "kiro", "reasonix"];
 
 fn json_map_to_string_map(
     map: &serde_json::Map<String, serde_json::Value>,
@@ -757,6 +761,73 @@ pub async fn delete_mcp_server(
 }
 
 #[tauri::command]
+pub async fn set_mcp_server_targets(
+    store: State<'_, SkillStore>,
+    server_id: String,
+    tools: Vec<String>,
+) -> Result<McpServerDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let desired = tools.into_iter().collect::<std::collections::HashSet<_>>();
+        if !desired
+            .iter()
+            .all(|tool| MCP_TARGETS.contains(&tool.as_str()))
+        {
+            anyhow::bail!("unsupported MCP target");
+        }
+        let server = store
+            .list_mcp_servers()?
+            .into_iter()
+            .find(|record| record.id == server_id)
+            .context("MCP server not found")?;
+        if (!server.env.is_empty() || !server.headers.is_empty()) && !server.proxy_enabled {
+            anyhow::bail!("credential proxy is disabled for this MCP server");
+        }
+        let bridge = bridge_runtime_for_server(&store, &server)?;
+        start_http_bridge(&bridge, &server)?;
+        let existing = store.list_mcp_targets(&server.id)?;
+        for tool in &desired {
+            if existing.iter().any(|target| target.tool == *tool) {
+                continue;
+            }
+            let host = mcp_host(tool)?;
+            let path = global_config_path(host)?;
+            sync_host_file(host, &server, &path, false, bridge.as_ref())?;
+            store.upsert_mcp_target(&McpServerTargetRecord {
+                id: Uuid::new_v4().to_string(),
+                mcp_server_id: server.id.clone(),
+                tool: tool.clone(),
+                status: "ok".to_string(),
+                last_error: None,
+                synced_at: Some(now_ms()),
+            })?;
+        }
+        for target in existing
+            .into_iter()
+            .filter(|target| !desired.contains(&target.tool))
+        {
+            let host = mcp_host(&target.tool)?;
+            remove_host_file(host, &server.name, &global_config_path(host)?)?;
+            store.delete_mcp_target(&server.id, &target.tool)?;
+        }
+        to_mcp_dto(&store, server)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+fn mcp_host(tool: &str) -> anyhow::Result<McpHost> {
+    match tool {
+        "codex" => Ok(McpHost::Codex),
+        "claude_code" => Ok(McpHost::ClaudeCode),
+        "kiro" => Ok(McpHost::Kiro),
+        "reasonix" => Ok(McpHost::Reasonix),
+        _ => anyhow::bail!("unsupported MCP target {tool}"),
+    }
+}
+
+#[tauri::command]
 pub async fn sync_mcp_server(
     store: State<'_, SkillStore>,
     server_id: String,
@@ -807,13 +878,7 @@ pub async fn sync_mcp_server(
         let existing = store.list_mcp_targets(&server.id)?;
         let mut results = Vec::new();
         for tool in tools {
-            let host = match tool.as_str() {
-                "codex" => McpHost::Codex,
-                "claude_code" => McpHost::ClaudeCode,
-                "kiro" => McpHost::Kiro,
-                "reasonix" => McpHost::Reasonix,
-                _ => anyhow::bail!("unsupported MCP target {tool}"),
-            };
+            let host = mcp_host(&tool)?;
             let owns = existing.iter().any(|target| target.tool == tool);
             let path = global_config_path(host)?;
             match sync_host_file(host, &server, &path, owns, bridge.as_ref()) {

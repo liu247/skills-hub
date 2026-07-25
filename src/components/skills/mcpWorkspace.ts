@@ -15,9 +15,13 @@ const manualSource = {
   sourceUrl: null,
 }
 
-const sourceIdentity = (sourceUrl: string | null | undefined) => {
+const sourceIdentity = (sourceUrl: string | null | undefined, localSourceLabel: (host: string) => string) => {
   if (!sourceUrl) return manualSource
   const normalized = sourceUrl.replace(/\/$/, '')
+  if (normalized.startsWith('local://')) {
+    const host = normalized.slice('local://'.length)
+    return { key: normalized, label: localSourceLabel(host), sourceUrl }
+  }
   try {
     const parsed = new URL(normalized)
     const parts = parsed.pathname.split('/').filter(Boolean)
@@ -40,10 +44,10 @@ const latestSyncAt = (server: McpServerDto) =>
     return latest === null || target.synced_at > latest ? target.synced_at : latest
   }, null)
 
-export const groupMcpServersBySource = (servers: McpServerDto[]): McpSourceCollection[] => {
+export const groupMcpServersBySource = (servers: McpServerDto[], localSourceLabel = (host: string) => `Local import · ${host}`): McpSourceCollection[] => {
   const groups = new Map<string, McpSourceCollection>()
   for (const server of servers) {
-    const source = sourceIdentity(server.source_url)
+    const source = sourceIdentity(server.source_url, localSourceLabel)
     const existing = groups.get(source.key)
     const updatedAt = latestSyncAt(server)
     if (existing) {

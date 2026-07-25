@@ -126,6 +126,7 @@ pub fn run() {
             commands::set_mcp_secret,
             commands::delete_mcp_secret,
             commands::delete_mcp_server,
+            commands::set_mcp_server_targets,
             commands::sync_mcp_server,
             commands::get_tool_status,
             commands::get_git_cache_cleanup_days,

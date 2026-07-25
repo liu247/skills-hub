@@ -5126,3 +5126,10 @@
 .mcp-server-card { justify-content: space-between; padding: 14px 16px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-app); }
 .mcp-transport { margin-left: 8px; padding: 2px 6px; font-size: 11px; border-radius: 999px; background: var(--bg-hover); color: var(--text-secondary); }
 .mcp-server-actions { flex-shrink: 0; }
+.mcp-target-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mcp-target-badge { padding: 2px 7px; border: 1px solid var(--success-soft-border); border-radius: 999px; background: var(--success-soft-bg); color: var(--status-success); font-size: 11px; }
+.mcp-target-badge.error { border-color: var(--danger-soft-border); background: var(--danger-soft-bg); color: var(--status-error); }
+.mcp-target-empty { color: var(--text-tertiary); font-size: 12px; }
+.mcp-target-options { display: flex; flex-direction: column; gap: 8px; }
+.mcp-target-option { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); color: var(--text-primary); }
+.mcp-target-option input { accent-color: var(--accent-primary); }

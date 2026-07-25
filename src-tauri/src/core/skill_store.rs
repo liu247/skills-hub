@@ -1081,6 +1081,16 @@ impl SkillStore {
         })
     }
 
+    pub fn delete_mcp_target(&self, server_id: &str, tool: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM mcp_server_targets WHERE mcp_server_id = ?1 AND tool = ?2",
+                params![server_id, tool],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn delete_mcp_server(&self, server_id: &str) -> Result<()> {
         self.with_conn(|conn| {
             conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![server_id])?;

@@ -14,6 +14,7 @@ const t = ((key: string, options?: Record<string, unknown>) => ({
   'mcp.allNormal': 'All healthy',
   'mcp.sourceCount': `${options?.count ?? 0} MCP services`,
   'mcp.manualSource': 'Manual configuration',
+  'mcp.localSource': `Local import · ${options?.app ?? ''}`,
   'mcp.sourceSearch': 'Search MCP services…',
   'mcp.allSources': 'All sources',
   'mcp.sortUpdated': 'Recently updated',
@@ -52,6 +53,7 @@ describe('McpPage', () => {
         onSetSecret={async () => undefined}
         onDelete={async () => undefined}
         onSync={async () => undefined}
+        onSetTargets={async () => undefined}
         onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
@@ -75,6 +77,7 @@ describe('McpPage', () => {
         onSetSecret={async () => undefined}
         onDelete={async () => undefined}
         onSync={async () => undefined}
+        onSetTargets={async () => undefined}
         onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
@@ -84,5 +87,11 @@ describe('McpPage', () => {
 
     expect(markup).toContain('Name')
     expect(markup).toContain('Credential names')
+  })
+
+  it('renders local discovery sources as readable App labels', () => {
+    const markup = renderToStaticMarkup(<McpPage busy={false} initialManualEditor={false} servers={[{ id: 'local', name: 'filesystem', transport: 'stdio', command: 'npx', args: [], env: {}, cwd: null, url: null, headers: {}, enabled: true, proxy_enabled: true, source_url: 'local://codex', source_path: null, secret_refs: [], targets: [{ tool: 'codex', status: 'ok', last_error: null, synced_at: 1 }] }]} onSave={async () => null} onSetSecret={async () => undefined} onDelete={async () => undefined} onSync={async () => undefined} onSetTargets={async () => undefined} onScanLocal={() => undefined} onOpenImport={() => undefined} onCloseManualEditor={() => undefined} t={t} />)
+
+    expect(markup).toContain('Local import · Codex')
   })
 })

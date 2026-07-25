@@ -3,6 +3,7 @@ import { ArrowUpDown, ChevronLeft, FolderKanban, Grid2X2, List, Plus, RefreshCw,
 import type { TFunction } from 'i18next'
 import type { McpServerDto } from './types'
 import { groupMcpServersBySource } from './mcpWorkspace'
+import McpTargetModal from './modals/McpTargetModal'
 
 type McpPageProps = {
   servers: McpServerDto[]
@@ -12,6 +13,7 @@ type McpPageProps = {
   onSetSecret: (serverId: string, envVar: string, value: string) => Promise<void>
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
+  onSetTargets: (serverId: string, tools: string[]) => Promise<void>
   onScanLocal: () => void
   onOpenImport: () => void
   onCloseManualEditor: () => void
@@ -25,7 +27,7 @@ const emptyServer = (): McpServerDto => ({
   url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
-const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
   const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
   const [headerName, setHeaderName] = useState('Authorization')
@@ -34,7 +36,8 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   const [sortBy, setSortBy] = useState<'updated' | 'name'>('updated')
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards')
   const [activeSource, setActiveSource] = useState<string | null>(null)
-  const collections = useMemo(() => groupMcpServersBySource(servers), [servers])
+  const [targetServer, setTargetServer] = useState<McpServerDto | null>(null)
+  const collections = useMemo(() => groupMcpServersBySource(servers, (host) => t('mcp.localSource', { app: host === 'claude_code' ? 'Claude Code' : host === 'reasonix' ? 'Reasonix' : host === 'kiro' ? 'Kiro' : 'Codex' })), [servers, t])
 
   const credentialTotal = servers.reduce((total, server) => total + server.secret_refs.length, 0)
   const credentialReady = servers.reduce((total, server) => total + server.secret_refs.filter((secret) => secret.has_value).length, 0)
@@ -73,13 +76,15 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   </div> : null
 
   const renderServer = (server: McpServerDto) => <article className="mcp-server-card" key={server.id}>
-    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
-    <div className="mcp-server-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void onSync(server.id, targets)}><RefreshCw size={15}/>{t('mcp.sync')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
+    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-badges">{server.targets.length ? server.targets.map((target) => <span className={target.status === 'error' ? 'mcp-target-badge error' : 'mcp-target-badge'} key={target.tool}>{t(target.tool)}</span>) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
+    <div className="mcp-server-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
   </article>
 
-  if (currentCollection) return <div className="mcp-workspace"><div className="collection-breadcrumb"><button type="button" className="btn btn-secondary" onClick={() => setActiveSource(null)}><ChevronLeft size={15}/>{t('mcp.back')}</button><span className="collection-breadcrumb-name">{sourceLabel(currentCollection.key)}</span><button type="button" className="btn btn-secondary mcp-source-sync" disabled={busy} onClick={() => void Promise.all(currentCollection.servers.map((server) => onSync(server.id, targets)))}><RefreshCw size={15}/>{t('mcp.sourceSync')}</button></div>{renderEditor()}<div className="mcp-server-list">{currentCollection.servers.map(renderServer)}</div></div>
+  const targetModal = targetServer ? <McpTargetModal open busy={busy} selectedTools={targetServer.targets.map((target) => target.tool)} onClose={() => setTargetServer(null)} onSave={(tools) => { void onSetTargets(targetServer.id, tools); setTargetServer(null) }} t={t} /> : null
 
-  return <div className="mcp-workspace">
+  if (currentCollection) return <><div className="mcp-workspace"><div className="collection-breadcrumb"><button type="button" className="btn btn-secondary" onClick={() => setActiveSource(null)}><ChevronLeft size={15}/>{t('mcp.back')}</button><span className="collection-breadcrumb-name">{sourceLabel(currentCollection.key)}</span><button type="button" className="btn btn-secondary mcp-source-sync" disabled={busy} onClick={() => void Promise.all(currentCollection.servers.map((server) => onSync(server.id, targets)))}><RefreshCw size={15}/>{t('mcp.sourceSync')}</button></div>{renderEditor()}<div className="mcp-server-list">{currentCollection.servers.map(renderServer)}</div></div>{targetModal}</>
+
+  return <><div className="mcp-workspace">
     <section className="dashboard-stats" aria-label={t('mcp.title')}>
       <article><span>{t('mcp.managed')}</span><strong>{servers.length}</strong></article>
       <article><span>{t('mcp.apps')}</span><strong>{syncedApps}</strong></article>
@@ -97,7 +102,7 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
     </div>
     {renderEditor()}
     {!filteredCollections.length ? <div className="empty">{t('mcp.empty')}</div> : <div className={`collections-list mcp-collections ${viewMode}-view`}><div className="collections-grid">{filteredCollections.map((collection) => <button type="button" className="collection-card mcp-source-card" key={collection.key} onClick={() => setActiveSource(collection.key)}><span className="collection-card-head"><span className="collection-card-icon" aria-hidden="true"><FolderKanban size={18}/></span><span className="collection-card-name">{sourceLabel(collection.key)}</span></span><span className="collection-card-meta"><span>{t('mcp.sourceCount', { count: collection.serviceCount })}</span><span>{collection.updatedAt ? new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(collection.updatedAt) : t('mcp.notSynced')}</span></span></button>)}</div></div>}
-  </div>
+  </div>{targetModal}</>
 }
 
 export default memo(McpPage)

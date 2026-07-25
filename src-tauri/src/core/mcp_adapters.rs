@@ -120,6 +120,61 @@ pub fn sync_host_file(
     })
 }
 
+pub fn remove_host_file(host: McpHost, server_name: &str, path: &Path) -> Result<McpSyncOutcome> {
+    if !path.exists() {
+        return Ok(McpSyncOutcome { backup_path: None });
+    }
+    let existing = std::fs::read_to_string(path).context("read existing MCP configuration")?;
+    let next = match host {
+        McpHost::ClaudeCode | McpHost::Kiro => remove_json_host_config(&existing, server_name)?,
+        McpHost::Codex => remove_codex_toml_config(&existing, server_name)?,
+        McpHost::Reasonix => remove_reasonix_toml_config(&existing, server_name)?,
+    };
+    Ok(McpSyncOutcome {
+        backup_path: write_config_atomically(path, &next)?,
+    })
+}
+
+pub fn remove_json_host_config(existing: &str, server_name: &str) -> Result<String> {
+    let mut document = if existing.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str::<Value>(existing).context("parse existing MCP JSON configuration")?
+    };
+    let root = document
+        .as_object_mut()
+        .context("MCP JSON configuration must be an object")?;
+    if let Some(servers) = root.get_mut("mcpServers").and_then(Value::as_object_mut) {
+        servers.remove(server_name);
+    }
+    Ok(serde_json::to_string_pretty(&document)?)
+}
+
+pub fn remove_codex_toml_config(existing: &str, server_name: &str) -> Result<String> {
+    let mut document = existing
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse existing Codex TOML configuration")?;
+    if let Some(servers) = document["mcp_servers"].as_table_mut() {
+        servers.remove(server_name);
+    }
+    Ok(document.to_string())
+}
+
+pub fn remove_reasonix_toml_config(existing: &str, server_name: &str) -> Result<String> {
+    let mut document = existing
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse existing Reasonix TOML configuration")?;
+    if let Some(tables) = document["plugins"].as_array_of_tables_mut() {
+        let index = tables
+            .iter()
+            .position(|table| table["name"].as_str() == Some(server_name));
+        if let Some(index) = index {
+            tables.remove(index);
+        }
+    }
+    Ok(document.to_string())
+}
+
 pub fn merge_codex_toml_config(
     existing: &str,
     rendered: &str,
