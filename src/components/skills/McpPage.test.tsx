@@ -41,7 +41,7 @@ describe('McpPage', () => {
     const markup = renderToStaticMarkup(
       <McpPage
         busy={false}
-        openManualEditor={false}
+        initialManualEditor={false}
         servers={[
           { id: 'one', name: 'filesystem', transport: 'stdio', command: 'npx', args: ['example-server'], env: {}, cwd: null, url: null, headers: {}, enabled: true, proxy_enabled: true, source_url: 'https://github.com/acme/mcp-tools', source_path: 'mcp.json', secret_refs: [], targets: [] },
           { id: 'two', name: 'github', transport: 'http', command: null, args: [], env: {}, cwd: null, url: 'https://mcp.example.com', headers: {}, enabled: true, proxy_enabled: true, source_url: 'https://github.com/acme/mcp-tools', source_path: '.mcp.json', secret_refs: [], targets: [] },
@@ -52,7 +52,7 @@ describe('McpPage', () => {
         onDelete={async () => undefined}
         onSync={async () => undefined}
         onOpenImport={() => undefined}
-        onManualEditorOpened={() => undefined}
+        onCloseManualEditor={() => undefined}
         t={t}
       />,
     )
@@ -61,5 +61,25 @@ describe('McpPage', () => {
     expect(markup).toContain('2 MCP services')
     expect(markup).toContain('Manual configuration')
     expect(markup).not.toContain('npx example-server')
+  })
+
+  it('opens the manual editor immediately when entered from manual configuration', () => {
+    const markup = renderToStaticMarkup(
+      <McpPage
+        busy={false}
+        initialManualEditor
+        servers={[]}
+        onSave={async () => null}
+        onSetSecret={async () => undefined}
+        onDelete={async () => undefined}
+        onSync={async () => undefined}
+        onOpenImport={() => undefined}
+        onCloseManualEditor={() => undefined}
+        t={t}
+      />,
+    )
+
+    expect(markup).toContain('Name')
+    expect(markup).toContain('Credential names')
   })
 })

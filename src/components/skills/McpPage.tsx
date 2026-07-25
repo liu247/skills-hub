@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { ArrowUpDown, ChevronLeft, FolderKanban, Grid2X2, List, Plus, RefreshCw, Search, Server, Trash2 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { McpServerDto } from './types'
@@ -7,13 +7,13 @@ import { groupMcpServersBySource } from './mcpWorkspace'
 type McpPageProps = {
   servers: McpServerDto[]
   busy: boolean
-  openManualEditor: boolean
+  initialManualEditor: boolean
   onSave: (server: McpServerDto) => Promise<McpServerDto | null>
   onSetSecret: (serverId: string, envVar: string, value: string) => Promise<void>
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
   onOpenImport: () => void
-  onManualEditorOpened: () => void
+  onCloseManualEditor: () => void
   t: TFunction
 }
 
@@ -24,8 +24,8 @@ const emptyServer = (): McpServerDto => ({
   url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
-const McpPage = ({ servers, busy, openManualEditor, onSave, onSetSecret, onDelete, onSync, onOpenImport, onManualEditorOpened, t }: McpPageProps) => {
-  const [draft, setDraft] = useState<McpServerDto | null>(null)
+const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+  const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
   const [headerName, setHeaderName] = useState('Authorization')
   const [query, setQuery] = useState('')
@@ -34,13 +34,6 @@ const McpPage = ({ servers, busy, openManualEditor, onSave, onSetSecret, onDelet
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards')
   const [activeSource, setActiveSource] = useState<string | null>(null)
   const collections = useMemo(() => groupMcpServersBySource(servers), [servers])
-
-  useEffect(() => {
-    if (openManualEditor) {
-      setDraft(emptyServer())
-      onManualEditorOpened()
-    }
-  }, [onManualEditorOpened, openManualEditor])
 
   const credentialTotal = servers.reduce((total, server) => total + server.secret_refs.length, 0)
   const credentialReady = servers.reduce((total, server) => total + server.secret_refs.filter((secret) => secret.has_value).length, 0)
@@ -64,6 +57,7 @@ const McpPage = ({ servers, busy, openManualEditor, onSave, onSetSecret, onDelet
       if (value) await onSetSecret(saved.id, name, value)
     }
     setDraft(null)
+    if (initialManualEditor) onCloseManualEditor()
     setSecretNames('')
   }
 
@@ -74,7 +68,7 @@ const McpPage = ({ servers, busy, openManualEditor, onSave, onSetSecret, onDelet
     <label>{t('mcp.transport')}<select value={draft.transport} onChange={(event) => setDraft({ ...draft, transport: event.target.value })}><option value="stdio">stdio</option><option value="http">HTTP</option></select></label>
     {draft.transport === 'stdio' ? <><label>{t('mcp.command')}<input value={draft.command ?? ''} onChange={(event) => setDraft({ ...draft, command: event.target.value })}/></label><label>{t('mcp.args')}<input value={draft.args.join(' ')} onChange={(event) => setDraft({ ...draft, args: event.target.value.split(' ').filter(Boolean) })}/></label></> : <><label>{t('mcp.url')}<input value={draft.url ?? ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })}/></label><label>{t('mcp.headerName')}<input value={headerName} onChange={(event) => setHeaderName(event.target.value)}/></label></>}
     <label>{t('mcp.secrets')}<input placeholder="API_TOKEN, GITHUB_TOKEN" value={secretNames} onChange={(event) => setSecretNames(event.target.value)}/></label>
-    <div className="mcp-editor-actions"><button type="button" className="btn btn-secondary" onClick={() => setDraft(null)}>{t('cancel')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{t('save')}</button></div>
+    <div className="mcp-editor-actions"><button type="button" className="btn btn-secondary" onClick={() => { setDraft(null); if (initialManualEditor) onCloseManualEditor() }}>{t('cancel')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{t('save')}</button></div>
   </div> : null
 
   const renderServer = (server: McpServerDto) => <article className="mcp-server-card" key={server.id}>

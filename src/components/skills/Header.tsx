@@ -18,7 +18,7 @@ import type { TFunction } from 'i18next'
 type ManagementTab = 'tags' | 'tools' | 'updates'
 
 type HeaderProps = {
-  activeView: 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add'
+  activeView: 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add' | 'mcp-manual'
   managementTab: ManagementTab
   skillCount: number
   tagCount: number
@@ -160,7 +160,7 @@ const Header = ({
           <span>{t('addSkills')}</span>
         </button>
         <button
-          className={activeView === 'mcp' ? 'active' : ''}
+          className={activeView === 'mcp' || activeView === 'mcp-manual' ? 'active' : ''}
           type="button"
           onClick={() => onViewChange('mcp')}
           title={collapsed ? t('manageTabs.mcp') : undefined}

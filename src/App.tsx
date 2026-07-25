@@ -88,7 +88,7 @@ type SkillScopeState = Record<
   }
 >
 
-type ActiveView = 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add'
+type ActiveView = 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add' | 'mcp-manual'
 type ManagementTab = 'tags' | 'tools' | 'updates'
 type UpdaterProxyOptions = { proxy?: string }
 type UpdaterDownloadOptions = DownloadOptions & UpdaterProxyOptions
@@ -214,7 +214,6 @@ function App() {
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
-  const [mcpManualEditorOpen, setMcpManualEditorOpen] = useState(false)
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -3720,21 +3719,21 @@ function App() {
               </div>
             ) : null}
           </div>
-        ) : activeView === 'mcp' ? (
+        ) : activeView === 'mcp' || activeView === 'mcp-manual' ? (
           <McpPage
             servers={mcpServers}
             busy={mcpBusy}
-            openManualEditor={mcpManualEditorOpen}
+            initialManualEditor={activeView === 'mcp-manual'}
             onSave={saveMcpServer}
             onSetSecret={setMcpSecret}
             onDelete={deleteMcpServer}
             onSync={syncMcpServer}
             onOpenImport={() => setActiveView('mcp-add')}
-            onManualEditorOpened={() => setMcpManualEditorOpen(false)}
+            onCloseManualEditor={() => setActiveView('mcp')}
             t={t}
           />
         ) : activeView === 'mcp-add' ? (
-          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => { setMcpManualEditorOpen(true); setActiveView('mcp') }} t={t} />
+          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp-manual')} t={t} />
         ) : activeView === 'manage' ? (
           <div className="management-page">
             <div className="management-header">
