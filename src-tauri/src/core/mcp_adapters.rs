@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
+
 use serde_json::{json, Map, Value};
 
 use super::skill_store::McpServerRecord;
@@ -93,6 +95,41 @@ pub fn merge_codex_toml_config(
     }
     servers.insert(server_name, toml_edit::Item::Table(replacement_entry));
     Ok(document.to_string())
+}
+
+pub fn write_config_atomically(path: &Path, contents: &str) -> Result<Option<PathBuf>> {
+    let parent = path
+        .parent()
+        .context("MCP configuration path has no parent directory")?;
+    std::fs::create_dir_all(parent).context("create MCP configuration directory")?;
+    let backup = if path.exists() {
+        let name = path
+            .file_name()
+            .context("MCP configuration path has no file name")?
+            .to_string_lossy();
+        let backup = parent.join(format!("{name}.skills-hub.bak-{}", now_ms()));
+        std::fs::copy(path, &backup).context("backup existing MCP configuration")?;
+        Some(backup)
+    } else {
+        None
+    };
+    let temp = parent.join(format!(
+        ".{}.skills-hub-{}.tmp",
+        path.file_name()
+            .context("MCP configuration path has no file name")?
+            .to_string_lossy(),
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&temp, contents).context("write temporary MCP configuration")?;
+    std::fs::rename(&temp, path).context("atomically replace MCP configuration")?;
+    Ok(backup)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 fn render_stdio(server: &McpServerRecord, requires_bridge: bool) -> Result<Value> {

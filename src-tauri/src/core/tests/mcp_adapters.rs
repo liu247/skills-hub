@@ -65,6 +65,19 @@ fn codex_toml_merge_preserves_comments_and_rejects_unowned_collision() {
 }
 
 #[test]
+fn atomic_write_keeps_backup_and_replaces_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.json");
+    std::fs::write(&path, "old").unwrap();
+
+    let backup = crate::core::mcp_adapters::write_config_atomically(&path, "new")
+        .unwrap()
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    assert_eq!(std::fs::read_to_string(backup).unwrap(), "old");
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();
