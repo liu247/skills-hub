@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 7;
+const SCHEMA_VERSION: i32 = 8;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -81,6 +81,40 @@ CREATE TABLE IF NOT EXISTS skill_tag_links (
   FOREIGN KEY(skill_id) REFERENCES skills(id) ON DELETE CASCADE,
   FOREIGN KEY(tag_id) REFERENCES skill_tags(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  transport TEXT NOT NULL,
+  command TEXT NULL,
+  args TEXT NOT NULL DEFAULT '[]',
+  env TEXT NOT NULL DEFAULT '{}',
+  cwd TEXT NULL,
+  url TEXT NULL,
+  headers TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  proxy_enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mcp_secret_refs (
+  mcp_server_id TEXT NOT NULL,
+  env_var TEXT NOT NULL,
+  PRIMARY KEY (mcp_server_id, env_var),
+  FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS mcp_server_targets (
+  id TEXT NOT NULL UNIQUE,
+  mcp_server_id TEXT NOT NULL,
+  tool TEXT NOT NULL,
+  status TEXT NOT NULL,
+  last_error TEXT NULL,
+  synced_at INTEGER NULL,
+  PRIMARY KEY (mcp_server_id, tool),
+  FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+);
 "#;
 
 #[derive(Clone, Debug)]
@@ -127,6 +161,81 @@ pub struct SkillTargetRecord {
     pub status: String,
     pub last_error: Option<String>,
     pub synced_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerRecord {
+    pub id: String,
+    pub name: String,
+    pub transport: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: serde_json::Map<String, serde_json::Value>,
+    pub cwd: Option<String>,
+    pub url: Option<String>,
+    pub headers: serde_json::Map<String, serde_json::Value>,
+    pub enabled: bool,
+    pub proxy_enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl McpServerRecord {
+    pub fn stdio(id: &str, name: &str, command: &str, args: Vec<String>) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            transport: "stdio".to_string(),
+            command: Some(command.to_string()),
+            args,
+            env: serde_json::Map::new(),
+            cwd: None,
+            url: None,
+            headers: serde_json::Map::new(),
+            enabled: true,
+            proxy_enabled: true,
+            created_at: now_ms(),
+            updated_at: now_ms(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpSecretRefRecord {
+    pub mcp_server_id: String,
+    pub env_var: String,
+}
+
+impl McpSecretRefRecord {
+    pub fn new(mcp_server_id: &str, env_var: &str) -> Self {
+        Self {
+            mcp_server_id: mcp_server_id.to_string(),
+            env_var: env_var.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerTargetRecord {
+    pub id: String,
+    pub mcp_server_id: String,
+    pub tool: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub synced_at: Option<i64>,
+}
+
+impl McpServerTargetRecord {
+    pub fn pending(mcp_server_id: &str, tool: &str) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            mcp_server_id: mcp_server_id.to_string(),
+            tool: tool.to_string(),
+            status: "pending".to_string(),
+            last_error: None,
+            synced_at: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,6 +294,9 @@ impl SkillStore {
                 }
                 if user_version < 7 {
                     migrate_collection_to_v7(conn)?;
+                }
+                if user_version < 8 {
+                    migrate_mcp_to_v8(conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -781,6 +893,135 @@ impl SkillStore {
         })
     }
 
+    pub fn upsert_mcp_server(&self, record: &McpServerRecord) -> Result<()> {
+        let args = serde_json::to_string(&record.args)?;
+        let env = serde_json::to_string(&record.env)?;
+        let headers = serde_json::to_string(&record.headers)?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO mcp_servers (
+                   id, name, transport, command, args, env, cwd, url, headers, enabled,
+                   proxy_enabled, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name, transport = excluded.transport, command = excluded.command,
+                   args = excluded.args, env = excluded.env, cwd = excluded.cwd, url = excluded.url,
+                   headers = excluded.headers, enabled = excluded.enabled,
+                   proxy_enabled = excluded.proxy_enabled, updated_at = excluded.updated_at",
+                params![
+                    record.id,
+                    record.name,
+                    record.transport,
+                    record.command,
+                    args,
+                    env,
+                    record.cwd,
+                    record.url,
+                    headers,
+                    record.enabled as i32,
+                    record.proxy_enabled as i32,
+                    record.created_at,
+                    record.updated_at
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<McpServerRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, name, transport, command, args, env, cwd, url, headers, enabled,
+                        proxy_enabled, created_at, updated_at FROM mcp_servers ORDER BY name COLLATE NOCASE",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let args: String = row.get(4)?;
+                let env: String = row.get(5)?;
+                let headers: String = row.get(8)?;
+                Ok((
+                    row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?, args, env, row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?, headers, row.get::<_, i32>(9)? != 0,
+                    row.get::<_, i32>(10)? != 0, row.get::<_, i64>(11)?, row.get::<_, i64>(12)?,
+                ))
+            })?;
+            rows.map(|row| {
+                let (id, name, transport, command, args, env, cwd, url, headers, enabled, proxy_enabled, created_at, updated_at) = row?;
+                Ok(McpServerRecord {
+                    id, name, transport, command,
+                    args: serde_json::from_str(&args).context("decode MCP args")?,
+                    env: serde_json::from_str(&env).context("decode MCP env")?,
+                    cwd, url,
+                    headers: serde_json::from_str(&headers).context("decode MCP headers")?,
+                    enabled, proxy_enabled, created_at, updated_at,
+                })
+            }).collect()
+        })
+    }
+
+    pub fn replace_mcp_secret_refs(
+        &self,
+        server_id: &str,
+        refs: &[McpSecretRefRecord],
+    ) -> Result<()> {
+        self.with_conn(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute(
+                "DELETE FROM mcp_secret_refs WHERE mcp_server_id = ?1",
+                params![server_id],
+            )?;
+            for reference in refs {
+                tx.execute(
+                    "INSERT INTO mcp_secret_refs (mcp_server_id, env_var) VALUES (?1, ?2)",
+                    params![server_id, reference.env_var],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn list_mcp_secret_refs(&self, server_id: &str) -> Result<Vec<McpSecretRefRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT mcp_server_id, env_var FROM mcp_secret_refs WHERE mcp_server_id = ?1 ORDER BY env_var")?;
+            let rows = stmt.query_map(params![server_id], |row| Ok(McpSecretRefRecord { mcp_server_id: row.get(0)?, env_var: row.get(1)? }))?
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(Into::into);
+            rows
+        })
+    }
+
+    pub fn upsert_mcp_target(&self, record: &McpServerTargetRecord) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO mcp_server_targets (id, mcp_server_id, tool, status, last_error, synced_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(mcp_server_id, tool) DO UPDATE SET
+                   status = excluded.status, last_error = excluded.last_error, synced_at = excluded.synced_at",
+                params![record.id, record.mcp_server_id, record.tool, record.status, record.last_error, record.synced_at],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn list_mcp_targets(&self, server_id: &str) -> Result<Vec<McpServerTargetRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT id, mcp_server_id, tool, status, last_error, synced_at FROM mcp_server_targets WHERE mcp_server_id = ?1 ORDER BY tool")?;
+            let rows = stmt.query_map(params![server_id], |row| Ok(McpServerTargetRecord {
+                id: row.get(0)?, mcp_server_id: row.get(1)?, tool: row.get(2)?, status: row.get(3)?,
+                last_error: row.get(4)?, synced_at: row.get(5)?,
+            }))?.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into);
+            rows
+        })
+    }
+
+    pub fn delete_mcp_server(&self, server_id: &str) -> Result<()> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM mcp_servers WHERE id = ?1", params![server_id])?;
+            Ok(())
+        })
+    }
+
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
         let conn = Connection::open(&self.db_path)
             .with_context(|| format!("failed to open db at {:?}", self.db_path))?;
@@ -851,6 +1092,43 @@ fn migrate_collection_to_v7(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "ALTER TABLE skills ADD COLUMN collection TEXT NULL;
          CREATE INDEX IF NOT EXISTS idx_skills_collection ON skills(collection);",
+    )?;
+    Ok(())
+}
+
+fn migrate_mcp_to_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mcp_servers (
+           id TEXT PRIMARY KEY,
+           name TEXT NOT NULL UNIQUE,
+           transport TEXT NOT NULL,
+           command TEXT NULL,
+           args TEXT NOT NULL DEFAULT '[]',
+           env TEXT NOT NULL DEFAULT '{}',
+           cwd TEXT NULL,
+           url TEXT NULL,
+           headers TEXT NOT NULL DEFAULT '{}',
+           enabled INTEGER NOT NULL DEFAULT 1,
+           proxy_enabled INTEGER NOT NULL DEFAULT 1,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS mcp_secret_refs (
+           mcp_server_id TEXT NOT NULL,
+           env_var TEXT NOT NULL,
+           PRIMARY KEY (mcp_server_id, env_var),
+           FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+         );
+         CREATE TABLE IF NOT EXISTS mcp_server_targets (
+           id TEXT NOT NULL UNIQUE,
+           mcp_server_id TEXT NOT NULL,
+           tool TEXT NOT NULL,
+           status TEXT NOT NULL,
+           last_error TEXT NULL,
+           synced_at INTEGER NULL,
+           PRIMARY KEY (mcp_server_id, tool),
+           FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+         );",
     )?;
     Ok(())
 }

@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{
+    McpSecretRefRecord, McpServerRecord, McpServerTargetRecord, SkillRecord, SkillStore,
+    SkillTargetRecord,
+};
 use rusqlite::Connection;
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -36,6 +39,33 @@ fn make_skill(id: &str, name: &str, central_path: &str, updated_at: i64) -> Skil
 fn schema_is_idempotent() {
     let (_dir, store) = make_store();
     store.ensure_schema().expect("ensure_schema again");
+}
+
+#[test]
+fn mcp_server_roundtrip_cascades_refs_and_targets() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_mcp_server(&McpServerRecord::stdio(
+            "m1",
+            "github",
+            "npx",
+            vec!["-y".into()],
+        ))
+        .unwrap();
+    store
+        .replace_mcp_secret_refs("m1", &[McpSecretRefRecord::new("m1", "GITHUB_TOKEN")])
+        .unwrap();
+    store
+        .upsert_mcp_target(&McpServerTargetRecord::pending("m1", "codex"))
+        .unwrap();
+
+    assert_eq!(store.list_mcp_servers().unwrap().len(), 1);
+    assert_eq!(store.list_mcp_secret_refs("m1").unwrap().len(), 1);
+    assert_eq!(store.list_mcp_targets("m1").unwrap().len(), 1);
+
+    store.delete_mcp_server("m1").unwrap();
+    assert!(store.list_mcp_secret_refs("m1").unwrap().is_empty());
+    assert!(store.list_mcp_targets("m1").unwrap().is_empty());
 }
 
 #[test]
