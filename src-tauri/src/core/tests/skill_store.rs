@@ -42,6 +42,20 @@ fn schema_is_idempotent() {
 }
 
 #[test]
+fn schema_repairs_missing_mcp_tables_when_version_is_already_current() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db = dir.path().join("test.db");
+    let conn = Connection::open(&db).unwrap();
+    conn.pragma_update(None, "user_version", 8).unwrap();
+    drop(conn);
+
+    let store = SkillStore::new(db);
+    store.ensure_schema().unwrap();
+
+    assert!(store.list_mcp_servers().unwrap().is_empty());
+}
+
+#[test]
 fn mcp_server_roundtrip_cascades_refs_and_targets() {
     let (_dir, store) = make_store();
     store

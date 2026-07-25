@@ -306,6 +306,10 @@ impl SkillStore {
                 );
             }
 
+            // A previous pre-release could record schema version 8 without creating
+            // the MCP tables. The migration is idempotent, so always repair that state.
+            migrate_mcp_to_v8(conn)?;
+
             Ok(())
         })
     }
