@@ -29,6 +29,7 @@ use crate::core::installer::{
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
+use crate::core::mcp_adapters::{global_config_path, sync_host_file, McpHost};
 use crate::core::network_proxy::{
     get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -37,7 +38,7 @@ use crate::core::network_proxy::{
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
 use crate::core::skill_store::{
-    McpSecretRefRecord, McpServerRecord, SkillStore, SkillTargetRecord,
+    McpSecretRefRecord, McpServerRecord, McpServerTargetRecord, SkillStore, SkillTargetRecord,
 };
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
@@ -497,6 +498,70 @@ pub async fn delete_mcp_server(
         .await
         .map_err(|err| err.to_string())?
         .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn sync_mcp_server(
+    store: State<'_, SkillStore>,
+    server_id: String,
+    tools: Vec<String>,
+) -> Result<Vec<McpTargetDto>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let server = store
+            .list_mcp_servers()?
+            .into_iter()
+            .find(|record| record.id == server_id)
+            .context("MCP server not found")?;
+        if (!server.env.is_empty() || !server.headers.is_empty()) && server.proxy_enabled {
+            anyhow::bail!("credential bridge runtime is not available yet");
+        }
+        if (!server.env.is_empty() || !server.headers.is_empty()) && !server.proxy_enabled {
+            anyhow::bail!("credential proxy is disabled for this MCP server");
+        }
+        let existing = store.list_mcp_targets(&server.id)?;
+        let mut results = Vec::new();
+        for tool in tools {
+            let host = match tool.as_str() {
+                "codex" => McpHost::Codex,
+                "claude_code" => McpHost::ClaudeCode,
+                "kiro" => McpHost::Kiro,
+                "reasonix" => McpHost::Reasonix,
+                _ => anyhow::bail!("unsupported MCP target {tool}"),
+            };
+            let owns = existing.iter().any(|target| target.tool == tool);
+            let path = global_config_path(host)?;
+            match sync_host_file(host, &server, &path, owns, None) {
+                Ok(_) => {
+                    let target = McpServerTargetRecord {
+                        id: Uuid::new_v4().to_string(),
+                        mcp_server_id: server.id.clone(),
+                        tool: tool.clone(),
+                        status: "ok".to_string(),
+                        last_error: None,
+                        synced_at: Some(now_ms()),
+                    };
+                    store.upsert_mcp_target(&target)?;
+                    results.push(McpTargetDto {
+                        tool,
+                        status: "ok".to_string(),
+                        last_error: None,
+                        synced_at: target.synced_at,
+                    });
+                }
+                Err(err) => results.push(McpTargetDto {
+                    tool,
+                    status: "error".to_string(),
+                    last_error: Some(err.to_string()),
+                    synced_at: None,
+                }),
+            }
+        }
+        Ok::<_, anyhow::Error>(results)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]

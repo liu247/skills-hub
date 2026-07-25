@@ -123,6 +123,7 @@ pub fn run() {
             commands::set_mcp_secret,
             commands::delete_mcp_secret,
             commands::delete_mcp_server,
+            commands::sync_mcp_server,
             commands::get_tool_status,
             commands::get_git_cache_cleanup_days,
             commands::get_git_cache_ttl_secs,
