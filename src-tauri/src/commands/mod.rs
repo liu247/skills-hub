@@ -31,6 +31,7 @@ use crate::core::installer::{
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
 use crate::core::mcp_import::{scan_mcp_config_files, McpImportCandidate};
+use crate::core::mcp_discovery::{scan_local_mcp_configs_in, LocalMcpPlan};
 use crate::core::network_proxy::{
     app_http_client, get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -446,6 +447,17 @@ pub async fn scan_mcp_git_source(
             candidate.source_url = clone_url.clone();
         }
         Ok::<_, anyhow::Error>(candidates)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn scan_local_mcp_configs() -> Result<LocalMcpPlan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir().context("resolve user home directory for MCP scan")?;
+        scan_local_mcp_configs_in(&home)
     })
     .await
     .map_err(|err| err.to_string())?

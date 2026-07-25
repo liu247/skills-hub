@@ -12,6 +12,7 @@ pub mod installer;
 pub mod mcp;
 pub mod mcp_adapters;
 pub mod mcp_bridge;
+pub mod mcp_discovery;
 pub mod mcp_import;
 pub mod network_proxy;
 pub mod onboarding;
@@ -30,6 +31,10 @@ mod mcp_tests;
 #[cfg(test)]
 #[path = "tests/mcp_import.rs"]
 mod mcp_import_tests;
+
+#[cfg(test)]
+#[path = "tests/mcp_discovery.rs"]
+mod mcp_discovery_tests;
 
 #[cfg(test)]
 #[path = "tests/credential_store.rs"]
