@@ -304,6 +304,7 @@ impl SkillStore {
                     migrate_mcp_to_v8(conn)?;
                 }
                 if user_version < 9 {
+                    migrate_mcp_to_v8(conn)?;
                     migrate_mcp_to_v9(conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -318,6 +319,7 @@ impl SkillStore {
             // A previous pre-release could record schema version 8 without creating
             // the MCP tables. The migration is idempotent, so always repair that state.
             migrate_mcp_to_v8(conn)?;
+            migrate_mcp_to_v9(conn)?;
 
             Ok(())
         })
@@ -1198,7 +1200,22 @@ fn migrate_mcp_to_v8(conn: &Connection) -> Result<()> {
 }
 
 fn migrate_mcp_to_v9(conn: &Connection) -> Result<()> {
-    conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN source_url TEXT NULL; ALTER TABLE mcp_servers ADD COLUMN source_path TEXT NULL;")?;
+    let columns = conn
+        .prepare("PRAGMA table_info(mcp_servers)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+    if !columns.contains("source_url") {
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN source_url TEXT NULL",
+            [],
+        )?;
+    }
+    if !columns.contains("source_path") {
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN source_path TEXT NULL",
+            [],
+        )?;
+    }
     Ok(())
 }
 
