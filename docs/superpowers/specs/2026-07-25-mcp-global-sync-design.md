@@ -4,7 +4,7 @@
 
 将一个由 Skills Hub 管理的 MCP Server 同步到 Codex、Claude Code、Kiro 与 Reasonix 四个宿主。第一阶段仅支持用户级（全局）配置；不创建或修改项目级 MCP 配置。
 
-本阶段覆盖 Server 的创建、编辑、目标选择、单向同步、结果展示与错误提示。导入现有配置、双向合并、项目级 scope、Marketplace、秘钥托管与健康检查均不在范围内。
+本阶段覆盖 Server 的创建、编辑、目标选择、单向同步、结果展示与错误提示，以及统一的操作系统安全凭据库密钥管理。导入现有配置、双向合并、项目级 scope、Marketplace 与健康检查均不在范围内。
 
 ## 核心模型
 
@@ -19,6 +19,16 @@
 `McpServerTarget` 记录一个 Server 到一个宿主的同步关系：`mcp_server_id`、`tool`、`scope=global`、`status`、`last_error`、`synced_at`。目标级扩展字段只用于不能无损映射的宿主特性，例如 Codex 的启用/工具审批设置、Kiro 的 `autoApprove` 与 `disabledTools`。
 
 中央模型不保存明文密钥；`env`、HTTP headers 只保存环境变量引用或非敏感静态值。
+
+## 密钥管理
+
+操作系统安全凭据库是唯一的真实密钥存储：macOS 使用 Keychain、Windows 使用 Credential Manager、Linux 使用 Secret Service。应用数据库只保存稳定的密钥引用（服务名与环境变量名），绝不保存密钥值或可逆加密副本；不提供主密码或可移植密钥库作为替代路径。
+
+一个 MCP Server 可关联多个命名密钥，例如 `GITHUB_TOKEN` 和 `STRIPE_KEY`。用户在 Skills Hub 中录入、更新或删除一次密钥后，所有已选宿主在下次同步时均从同一安全凭据库生成其所需的环境变量引用或认证字段，无需在各 App 重复输入。
+
+同步、备份、差异预览、SQLite 数据、日志、Tauri IPC DTO 和错误消息都不得包含明文密钥。若某宿主无法以环境变量或等效的安全引用表达所需认证，adapter 必须阻止该目标同步并给出明确的能力诊断，禁止降级为明文写入配置文件。
+
+从现有宿主配置导入明文密钥并迁移到安全凭据库不属于第一阶段；后续实现时必须先写入凭据库、重新同步目标配置，并由用户明确确认是否移除原配置中的明文。
 
 ## 宿主适配器
 
@@ -56,4 +66,5 @@ Tauri command 层只负责 DTO 与错误转换。MCP 的 SQLite store、模型�
 - 不相关配置、注释（Codex）和未管理 MCP 条目保持不变。
 - 配置写入失败时原文件保持完整，目标状态记录错误。
 - 已管理 Server 的重复同步是幂等的。
+- 密钥值不出现在 SQLite、配置文件、备份、预览、日志、DTO 或错误信息中。
 - `npm run check` 通过。
