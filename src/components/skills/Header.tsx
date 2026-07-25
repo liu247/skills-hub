@@ -8,6 +8,7 @@ import {
   Layers3,
   LoaderCircle,
   RefreshCw,
+  Server,
   Settings,
   Tag,
   Wrench,
@@ -181,6 +182,15 @@ const Header = ({
           <Wrench size={18} />
           <span>{t('manageTabs.tools')}</span>
           <em>{toolCount}</em>
+        </button>
+        <button
+          className={activeView === 'manage' && managementTab === 'mcp' ? 'active' : ''}
+          type="button"
+          onClick={() => onManagementTabChange('mcp')}
+          title={collapsed ? t('manageTabs.mcp') : undefined}
+        >
+          <Server size={18} />
+          <span>{t('manageTabs.mcp')}</span>
         </button>
         <button
           className={activeView === 'manage' && managementTab === 'updates' ? 'active' : ''}
