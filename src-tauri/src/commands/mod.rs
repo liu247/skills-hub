@@ -20,6 +20,7 @@ use crate::core::cache_cleanup::{
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use crate::core::content_hash::hash_dir;
+use crate::core::credential_store::{CredentialStore, OsCredentialStore};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
@@ -27,6 +28,7 @@ use crate::core::installer::{
     install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
+use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 use crate::core::network_proxy::{
     get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -34,7 +36,9 @@ use crate::core::network_proxy::{
     set_github_proxy_url as set_github_proxy_url_core, GithubProxyConfig,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
-use crate::core::skill_store::{SkillStore, SkillTargetRecord};
+use crate::core::skill_store::{
+    McpSecretRefRecord, McpServerRecord, SkillStore, SkillTargetRecord,
+};
 use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
@@ -83,6 +87,66 @@ pub struct McpServerDto {
     pub proxy_enabled: bool,
     pub secret_refs: Vec<McpSecretStatusDto>,
     pub targets: Vec<McpTargetDto>,
+}
+
+fn json_map_to_string_map(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    map.iter()
+        .map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), value.to_string()))
+                .ok_or_else(|| anyhow::anyhow!("MCP value for {key} must be a string"))
+        })
+        .collect()
+}
+
+fn string_map_to_json_map(
+    map: std::collections::BTreeMap<String, String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    map.into_iter()
+        .map(|(key, value)| (key, serde_json::Value::String(value)))
+        .collect()
+}
+
+fn to_mcp_dto(store: &SkillStore, record: McpServerRecord) -> anyhow::Result<McpServerDto> {
+    let credentials = OsCredentialStore;
+    let secret_refs = store
+        .list_mcp_secret_refs(&record.id)?
+        .into_iter()
+        .map(|reference| {
+            Ok(McpSecretStatusDto {
+                has_value: credentials.get(&record.id, &reference.env_var)?.is_some(),
+                env_var: reference.env_var,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let targets = store
+        .list_mcp_targets(&record.id)?
+        .into_iter()
+        .map(|target| McpTargetDto {
+            tool: target.tool,
+            status: target.status,
+            last_error: target.last_error,
+            synced_at: target.synced_at,
+        })
+        .collect();
+    Ok(McpServerDto {
+        id: record.id,
+        name: record.name,
+        transport: record.transport,
+        command: record.command,
+        args: record.args,
+        env: json_map_to_string_map(&record.env)?,
+        cwd: record.cwd,
+        url: record.url,
+        headers: json_map_to_string_map(&record.headers)?,
+        enabled: record.enabled,
+        proxy_enabled: record.proxy_enabled,
+        secret_refs,
+        targets,
+    })
 }
 
 fn format_anyhow_error(err: anyhow::Error) -> String {
@@ -326,6 +390,110 @@ fn resolve_runtime_tool_root(
 pub async fn get_tool_config(store: State<'_, SkillStore>) -> Result<ToolConfigDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || load_tool_config(&store).map(ToolConfigDto::from))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn get_mcp_servers(store: State<'_, SkillStore>) -> Result<Vec<McpServerDto>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store
+            .list_mcp_servers()?
+            .into_iter()
+            .map(|record| to_mcp_dto(&store, record))
+            .collect::<anyhow::Result<Vec<_>>>()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn upsert_mcp_server(
+    store: State<'_, SkillStore>,
+    server: McpServerDto,
+) -> Result<McpServerDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let transport = match server.transport.as_str() {
+            "stdio" => McpTransport::Stdio,
+            "http" => McpTransport::Http,
+            _ => anyhow::bail!("unsupported MCP transport"),
+        };
+        let input = McpServerInput {
+            name: server.name.clone(),
+            transport,
+            command: server.command.clone(),
+            args: server.args.clone(),
+            env: server.env.clone(),
+            url: server.url.clone(),
+        };
+        validate_mcp_server_input(&input)?;
+        let now = now_ms();
+        let record = McpServerRecord {
+            id: if server.id.is_empty() {
+                Uuid::new_v4().to_string()
+            } else {
+                server.id
+            },
+            name: server.name,
+            transport: server.transport,
+            command: server.command,
+            args: server.args,
+            env: string_map_to_json_map(server.env),
+            cwd: server.cwd,
+            url: server.url,
+            headers: string_map_to_json_map(server.headers),
+            enabled: server.enabled,
+            proxy_enabled: server.proxy_enabled,
+            created_at: now,
+            updated_at: now,
+        };
+        store.upsert_mcp_server(&record)?;
+        let refs = server
+            .secret_refs
+            .iter()
+            .map(|reference| McpSecretRefRecord::new(&record.id, &reference.env_var))
+            .collect::<Vec<_>>();
+        store.replace_mcp_secret_refs(&record.id, &refs)?;
+        to_mcp_dto(&store, record)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn set_mcp_secret(
+    server_id: String,
+    env_var: String,
+    value: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        OsCredentialStore.set(&server_id, &env_var, &value)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn delete_mcp_secret(server_id: String, env_var: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || OsCredentialStore.delete(&server_id, &env_var))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn delete_mcp_server(
+    store: State<'_, SkillStore>,
+    server_id: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || store.delete_mcp_server(&server_id))
         .await
         .map_err(|err| err.to_string())?
         .map_err(format_anyhow_error)
