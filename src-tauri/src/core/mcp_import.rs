@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use walkdir::WalkDir;
 
 use super::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpImportCandidate {
     pub name: String,
     pub transport: String,
@@ -15,6 +17,48 @@ pub struct McpImportCandidate {
     pub url: Option<String>,
     pub headers: BTreeMap<String, String>,
     pub source_path: String,
+}
+
+pub fn scan_mcp_config_files(repo_dir: &std::path::Path) -> Result<Vec<McpImportCandidate>> {
+    let mut candidates = Vec::new();
+    for entry in WalkDir::new(repo_dir)
+        .max_depth(5)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file()
+            || !is_mcp_config_name(entry.file_name().to_string_lossy().as_ref())
+        {
+            continue;
+        }
+        let contents = std::fs::read_to_string(entry.path())
+            .with_context(|| format!("read MCP configuration {:?}", entry.path()))?;
+        let source_path = entry
+            .path()
+            .strip_prefix(repo_dir)
+            .unwrap_or(entry.path())
+            .to_string_lossy();
+        match parse_mcp_config(&source_path, &contents) {
+            Ok(mut found) => candidates.append(&mut found),
+            Err(error) => log::debug!("skip MCP config {}: {error:#}", source_path),
+        }
+    }
+    if candidates.is_empty() {
+        anyhow::bail!("no importable MCP configuration found in repository")
+    }
+    candidates.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.source_path.cmp(&right.source_path))
+    });
+    Ok(candidates)
+}
+
+fn is_mcp_config_name(name: &str) -> bool {
+    matches!(
+        name,
+        "mcp.json" | ".mcp.json" | "claude_desktop_config.json" | "mcp.config.json"
+    )
 }
 
 pub fn parse_mcp_config(source_path: &str, contents: &str) -> Result<Vec<McpImportCandidate>> {

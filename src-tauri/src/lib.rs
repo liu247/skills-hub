@@ -119,6 +119,7 @@ pub fn run() {
             commands::get_tool_config,
             commands::set_tool_config,
             commands::get_mcp_servers,
+            commands::scan_mcp_git_source,
             commands::upsert_mcp_server,
             commands::set_mcp_secret,
             commands::delete_mcp_secret,

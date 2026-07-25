@@ -24,12 +24,13 @@ use crate::core::credential_store::{CredentialStore, OsCredentialStore};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
-    install_git_skill, install_git_skill_from_selection, install_local_skill,
+    checkout_git_source, install_git_skill, install_git_skill_from_selection, install_local_skill,
     install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
+use crate::core::mcp_import::{scan_mcp_config_files, McpImportCandidate};
 use crate::core::network_proxy::{
     app_http_client, get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -420,6 +421,23 @@ pub async fn get_mcp_servers(store: State<'_, SkillStore>) -> Result<Vec<McpServ
             .into_iter()
             .map(|record| to_mcp_dto(&store, record))
             .collect::<anyhow::Result<Vec<_>>>()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn scan_mcp_git_source(
+    app: tauri::AppHandle,
+    store: State<'_, SkillStore>,
+    repoUrl: String,
+) -> Result<Vec<McpImportCandidate>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (repo_dir, _, _) = checkout_git_source(&app, &store, &repoUrl)?;
+        scan_mcp_config_files(&repo_dir)
     })
     .await
     .map_err(|err| err.to_string())?

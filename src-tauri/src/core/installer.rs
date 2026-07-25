@@ -1381,6 +1381,22 @@ struct RepoCacheMeta {
 
 static GIT_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+pub fn checkout_git_source<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    store: &SkillStore,
+    repo_url: &str,
+) -> Result<(PathBuf, String, String)> {
+    let parsed = parse_github_url(repo_url);
+    let (path, revision) = clone_to_cache(
+        app,
+        store,
+        &parsed.clone_url,
+        parsed.branch.as_deref(),
+        None,
+    )?;
+    Ok((path, parsed.clone_url, revision))
+}
+
 fn clone_to_cache<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     store: &SkillStore,
