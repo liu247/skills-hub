@@ -17,6 +17,7 @@ pub struct McpImportCandidate {
     pub url: Option<String>,
     pub headers: BTreeMap<String, String>,
     pub source_path: String,
+    pub source_url: String,
 }
 
 pub fn scan_mcp_config_files(repo_dir: &std::path::Path) -> Result<Vec<McpImportCandidate>> {
@@ -164,6 +165,7 @@ fn parse_toml_server(
         url,
         headers,
         source_path: source_path.to_string(),
+        source_url: String::new(),
     })
 }
 
@@ -243,6 +245,7 @@ fn parse_server(source_path: &str, name: &str, value: &Value) -> Result<McpImpor
         url,
         headers,
         source_path: source_path.to_string(),
+        source_url: String::new(),
     })
 }
 

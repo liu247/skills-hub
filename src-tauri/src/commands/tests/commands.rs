@@ -18,6 +18,8 @@ fn mcp_dto_never_serializes_secret_values() {
         headers: std::collections::BTreeMap::new(),
         enabled: true,
         proxy_enabled: true,
+        source_url: None,
+        source_path: None,
         secret_refs: vec![McpSecretStatusDto {
             env_var: "GITHUB_TOKEN".to_string(),
             has_value: true,

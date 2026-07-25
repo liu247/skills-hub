@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 8;
+const SCHEMA_VERSION: i32 = 9;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   headers TEXT NOT NULL DEFAULT '{}',
   enabled INTEGER NOT NULL DEFAULT 1,
   proxy_enabled INTEGER NOT NULL DEFAULT 1,
+  source_url TEXT NULL,
+  source_path TEXT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -176,6 +178,8 @@ pub struct McpServerRecord {
     pub headers: serde_json::Map<String, serde_json::Value>,
     pub enabled: bool,
     pub proxy_enabled: bool,
+    pub source_url: Option<String>,
+    pub source_path: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -194,6 +198,8 @@ impl McpServerRecord {
             headers: serde_json::Map::new(),
             enabled: true,
             proxy_enabled: true,
+            source_url: None,
+            source_path: None,
             created_at: now_ms(),
             updated_at: now_ms(),
         }
@@ -296,6 +302,9 @@ impl SkillStore {
                 }
                 if user_version < 8 {
                     migrate_mcp_to_v8(conn)?;
+                }
+                if user_version < 9 {
+                    migrate_mcp_to_v9(conn)?;
                 }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
@@ -954,13 +963,13 @@ impl SkillStore {
             conn.execute(
                 "INSERT INTO mcp_servers (
                    id, name, transport, command, args, env, cwd, url, headers, enabled,
-                   proxy_enabled, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                   proxy_enabled, source_url, source_path, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(id) DO UPDATE SET
                    name = excluded.name, transport = excluded.transport, command = excluded.command,
                    args = excluded.args, env = excluded.env, cwd = excluded.cwd, url = excluded.url,
                    headers = excluded.headers, enabled = excluded.enabled,
-                   proxy_enabled = excluded.proxy_enabled, updated_at = excluded.updated_at",
+                   proxy_enabled = excluded.proxy_enabled, source_url = excluded.source_url, source_path = excluded.source_path, updated_at = excluded.updated_at",
                 params![
                     record.id,
                     record.name,
@@ -973,6 +982,8 @@ impl SkillStore {
                     headers,
                     record.enabled as i32,
                     record.proxy_enabled as i32,
+                    record.source_url,
+                    record.source_path,
                     record.created_at,
                     record.updated_at
                 ],
@@ -985,7 +996,7 @@ impl SkillStore {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, transport, command, args, env, cwd, url, headers, enabled,
-                        proxy_enabled, created_at, updated_at FROM mcp_servers ORDER BY name COLLATE NOCASE",
+                        proxy_enabled, source_url, source_path, created_at, updated_at FROM mcp_servers ORDER BY name COLLATE NOCASE",
             )?;
             let rows = stmt.query_map([], |row| {
                 let args: String = row.get(4)?;
@@ -995,18 +1006,18 @@ impl SkillStore {
                     row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?, args, env, row.get::<_, Option<String>>(6)?,
                     row.get::<_, Option<String>>(7)?, headers, row.get::<_, i32>(9)? != 0,
-                    row.get::<_, i32>(10)? != 0, row.get::<_, i64>(11)?, row.get::<_, i64>(12)?,
+                    row.get::<_, i32>(10)? != 0, row.get::<_, Option<String>>(11)?, row.get::<_, Option<String>>(12)?, row.get::<_, i64>(13)?, row.get::<_, i64>(14)?,
                 ))
             })?;
             rows.map(|row| {
-                let (id, name, transport, command, args, env, cwd, url, headers, enabled, proxy_enabled, created_at, updated_at) = row?;
+                let (id, name, transport, command, args, env, cwd, url, headers, enabled, proxy_enabled, source_url, source_path, created_at, updated_at) = row?;
                 Ok(McpServerRecord {
                     id, name, transport, command,
                     args: serde_json::from_str(&args).context("decode MCP args")?,
                     env: serde_json::from_str(&env).context("decode MCP env")?,
                     cwd, url,
                     headers: serde_json::from_str(&headers).context("decode MCP headers")?,
-                    enabled, proxy_enabled, created_at, updated_at,
+                    enabled, proxy_enabled, source_url, source_path, created_at, updated_at,
                 })
             }).collect()
         })
@@ -1183,6 +1194,11 @@ fn migrate_mcp_to_v8(conn: &Connection) -> Result<()> {
            FOREIGN KEY(mcp_server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
          );",
     )?;
+    Ok(())
+}
+
+fn migrate_mcp_to_v9(conn: &Connection) -> Result<()> {
+    conn.execute_batch("ALTER TABLE mcp_servers ADD COLUMN source_url TEXT NULL; ALTER TABLE mcp_servers ADD COLUMN source_path TEXT NULL;")?;
     Ok(())
 }
 

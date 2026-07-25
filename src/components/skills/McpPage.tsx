@@ -17,7 +17,7 @@ const targets = ['codex', 'claude_code', 'kiro', 'reasonix']
 
 const emptyServer = (): McpServerDto => ({
   id: '', name: '', transport: 'stdio', command: '', args: [], env: {}, cwd: null,
-  url: '', headers: {}, enabled: true, proxy_enabled: true, secret_refs: [], targets: [],
+  url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
 const McpPage = ({ servers, busy, onSave, onSetSecret, onDelete, onSync, t }: McpPageProps) => {
@@ -57,7 +57,7 @@ const McpPage = ({ servers, busy, onSave, onSetSecret, onDelete, onSync, t }: Mc
     </div> : null}
     <div className="mcp-server-list">
       {servers.map((server) => <article className="mcp-server-card" key={server.id}>
-        <div><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
+        <div><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p>{server.source_url ? <small>{server.source_url}{server.source_path ? ` · ${server.source_path}` : ''}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
         <div className="mcp-server-actions"><button type="button" disabled={busy} onClick={() => void onSync(server.id, targets)}><RefreshCw size={15}/>{t('mcp.sync')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
       </article>)}
       {!servers.length ? <p className="empty-state">{t('mcp.empty')}</p> : null}

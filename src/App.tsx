@@ -497,7 +497,7 @@ function App() {
     setMcpBusy(true)
     try {
       for (const candidate of candidates) {
-        const saved = await invokeTauri<McpServerDto>('upsert_mcp_server', { server: { id: '', name: candidate.name, transport: candidate.transport, command: candidate.command ?? '', args: candidate.args, env: candidate.env, cwd: null, url: candidate.url ?? '', headers: candidate.headers, enabled: true, proxy_enabled: true, secret_refs: Object.keys(candidate.env).concat(Object.values(candidate.headers).map((value) => value.slice(2, -1))).filter((env_var, index, values) => env_var && values.indexOf(env_var) === index).map((env_var) => ({ env_var, has_value: false })), targets: [] } })
+        const saved = await invokeTauri<McpServerDto>('upsert_mcp_server', { server: { id: '', name: candidate.name, transport: candidate.transport, command: candidate.command ?? '', args: candidate.args, env: candidate.env, cwd: null, url: candidate.url ?? '', headers: candidate.headers, enabled: true, proxy_enabled: true, source_url: candidate.source_url, source_path: candidate.source_path, secret_refs: Object.keys(candidate.env).concat(Object.values(candidate.headers).map((value) => value.slice(2, -1))).filter((env_var, index, values) => env_var && values.indexOf(env_var) === index).map((env_var) => ({ env_var, has_value: false })), targets: [] } })
         for (const reference of saved.secret_refs) { const value = window.prompt(t('mcp.secretPrompt', { name: reference.env_var })); if (value) await invokeTauri('set_mcp_secret', { serverId: saved.id, envVar: reference.env_var, value }) }
       }
       await loadMcpServers(); setMcpCandidates([]); setActiveView('mcp'); toast.success(t('mcp.saved'))

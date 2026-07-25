@@ -151,6 +151,8 @@ export type McpServerDto = {
   headers: Record<string, string>
   enabled: boolean
   proxy_enabled: boolean
+  source_url?: string | null
+  source_path?: string | null
   secret_refs: McpSecretStatusDto[]
   targets: McpTargetDto[]
 }
@@ -164,6 +166,7 @@ export type McpImportCandidateDto = {
   url?: string | null
   headers: Record<string, string>
   source_path: string
+  source_url: string
 }
 
 export type UpdateResultDto = {

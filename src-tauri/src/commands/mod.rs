@@ -88,6 +88,8 @@ pub struct McpServerDto {
     pub headers: std::collections::BTreeMap<String, String>,
     pub enabled: bool,
     pub proxy_enabled: bool,
+    pub source_url: Option<String>,
+    pub source_path: Option<String>,
     pub secret_refs: Vec<McpSecretStatusDto>,
     pub targets: Vec<McpTargetDto>,
 }
@@ -147,6 +149,8 @@ fn to_mcp_dto(store: &SkillStore, record: McpServerRecord) -> anyhow::Result<Mcp
         headers: json_map_to_string_map(&record.headers)?,
         enabled: record.enabled,
         proxy_enabled: record.proxy_enabled,
+        source_url: record.source_url,
+        source_path: record.source_path,
         secret_refs,
         targets,
     })
@@ -436,8 +440,12 @@ pub async fn scan_mcp_git_source(
 ) -> Result<Vec<McpImportCandidate>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let (repo_dir, _, _) = checkout_git_source(&app, &store, &repoUrl)?;
-        scan_mcp_config_files(&repo_dir)
+        let (repo_dir, clone_url, _) = checkout_git_source(&app, &store, &repoUrl)?;
+        let mut candidates = scan_mcp_config_files(&repo_dir)?;
+        for candidate in &mut candidates {
+            candidate.source_url = clone_url.clone();
+        }
+        Ok::<_, anyhow::Error>(candidates)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -483,6 +491,8 @@ pub async fn upsert_mcp_server(
             headers: string_map_to_json_map(server.headers),
             enabled: server.enabled,
             proxy_enabled: server.proxy_enabled,
+            source_url: server.source_url,
+            source_path: server.source_path,
             created_at: now,
             updated_at: now,
         };
