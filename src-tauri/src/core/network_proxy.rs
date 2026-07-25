@@ -75,7 +75,7 @@ pub fn auto_detect_github_proxy_url() -> String {
     }
 }
 
-pub fn github_http_client(proxy_url: &str, timeout_secs: Option<u64>) -> Result<Client> {
+pub fn app_http_client(proxy_url: &str, timeout_secs: Option<u64>) -> Result<Client> {
     let mut builder = ClientBuilder::new();
     if let Some(secs) = timeout_secs {
         builder = builder.timeout(std::time::Duration::from_secs(secs));
@@ -84,10 +84,14 @@ pub fn github_http_client(proxy_url: &str, timeout_secs: Option<u64>) -> Result<
     if !proxy_url.is_empty() {
         builder = builder.proxy(
             reqwest::Proxy::all(proxy_url)
-                .with_context(|| format!("invalid GitHub proxy URL: {}", proxy_url))?,
+                .with_context(|| format!("invalid proxy URL: {}", proxy_url))?,
         );
     }
     builder.build().context("build HTTP client")
+}
+
+pub fn github_http_client(proxy_url: &str, timeout_secs: Option<u64>) -> Result<Client> {
+    app_http_client(proxy_url, timeout_secs)
 }
 
 pub fn normalize_proxy_url(proxy_url: &str) -> String {
@@ -114,7 +118,7 @@ fn proxy_port_from_url(url: &str) -> Option<u16> {
 fn validate_proxy_url(proxy_url: &str) -> Result<()> {
     reqwest::Proxy::all(proxy_url)
         .map(|_| ())
-        .with_context(|| format!("invalid GitHub proxy URL: {}", proxy_url))
+        .with_context(|| format!("invalid proxy URL: {}", proxy_url))
 }
 
 fn local_tcp_port_is_open(host: &str, port: u16, timeout: Duration) -> bool {

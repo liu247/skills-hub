@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum SyncMode {
+    #[default]
     Auto,
     Symlink,
     Junction,
@@ -114,15 +117,57 @@ pub fn sync_dir_copy_with_overwrite(
     })
 }
 
-/// 部分工具的 skill 扫描器会跳过符号链接，只识别真实目录，
-/// 因此这些工具必须强制使用 copy 而不是 symlink/junction，否则同步后工具内不可见。
-/// - cursor: 不支持软链/junction
-/// - kiro_cli: 扫描器过滤 `type !== Directory`，符号链接会被跳过
-fn tool_requires_copy(tool_key: &str) -> bool {
-    const COPY_ONLY_TOOLS: [&str; 2] = ["cursor", "kiro_cli"];
-    COPY_ONLY_TOOLS
-        .iter()
-        .any(|t| tool_key.eq_ignore_ascii_case(t))
+pub fn sync_dir_with_mode_with_overwrite(
+    mode: SyncMode,
+    source: &Path,
+    target: &Path,
+    overwrite: bool,
+) -> Result<SyncOutcome> {
+    match mode {
+        SyncMode::Auto => sync_dir_hybrid_with_overwrite(source, target, overwrite),
+        SyncMode::Copy => sync_dir_copy_with_overwrite(source, target, overwrite),
+        SyncMode::Symlink | SyncMode::Junction => {
+            sync_dir_link_with_overwrite(mode, source, target, overwrite)
+        }
+    }
+}
+
+fn sync_dir_link_with_overwrite(
+    mode: SyncMode,
+    source: &Path,
+    target: &Path,
+    overwrite: bool,
+) -> Result<SyncOutcome> {
+    let mut did_replace = false;
+    if std::fs::symlink_metadata(target).is_ok() {
+        if is_same_link(target, source) {
+            return Ok(SyncOutcome {
+                mode_used: mode,
+                target_path: target.to_path_buf(),
+                replaced: false,
+            });
+        }
+        if overwrite {
+            remove_path_any(target)
+                .with_context(|| format!("remove existing target {:?}", target))?;
+            did_replace = true;
+        } else {
+            anyhow::bail!("target already exists: {:?}", target);
+        }
+    }
+
+    ensure_parent_dir(target)?;
+    match mode {
+        SyncMode::Symlink => try_link_dir(source, target)?,
+        SyncMode::Junction => try_junction(source, target)?,
+        SyncMode::Auto | SyncMode::Copy => unreachable!("link mode required"),
+    }
+
+    Ok(SyncOutcome {
+        mode_used: mode,
+        target_path: target.to_path_buf(),
+        replaced: did_replace,
+    })
 }
 
 pub fn sync_dir_for_tool_with_overwrite(
@@ -131,7 +176,8 @@ pub fn sync_dir_for_tool_with_overwrite(
     target: &Path,
     overwrite: bool,
 ) -> Result<SyncOutcome> {
-    if tool_requires_copy(tool_key) {
+    // Cursor 和 Kiro 的扫描器会跳过符号链接，必须同步真实目录。
+    if tool_key.eq_ignore_ascii_case("cursor") || tool_key.eq_ignore_ascii_case("kiro_cli") {
         return sync_dir_copy_with_overwrite(source, target, overwrite);
     }
     sync_dir_hybrid_with_overwrite(source, target, overwrite)
@@ -144,7 +190,7 @@ fn ensure_parent_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_path_any(path: &Path) -> Result<()> {
+pub(crate) fn remove_path_any(path: &Path) -> Result<()> {
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -196,6 +242,11 @@ fn try_junction(source: &Path, target: &Path) -> Result<()> {
     junction::create(source, target)
         .with_context(|| format!("junction {:?} -> {:?}", target, source))?;
     Ok(())
+}
+
+#[cfg(not(windows))]
+fn try_junction(_source: &Path, _target: &Path) -> Result<()> {
+    anyhow::bail!("junction not supported on this platform");
 }
 
 fn should_skip_copy(entry: &walkdir::DirEntry) -> bool {

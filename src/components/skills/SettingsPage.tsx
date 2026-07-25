@@ -1,10 +1,24 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Database, Github, Palette, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Database, ExternalLink, Github, Palette, RefreshCw } from 'lucide-react'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import type { TFunction } from 'i18next'
-import type { Update } from '@tauri-apps/plugin-updater'
+import type { DownloadOptions, Update } from '@tauri-apps/plugin-updater'
+import { toast } from 'sonner'
 import type { GithubProxyConfigDto } from './types'
 
+const PROJECT_REPOSITORY_URL = 'https://github.com/qufei1993/skills-hub'
+
 type UpdateStatus = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'done' | 'error'
+type UpdaterProxyOptions = { proxy?: string }
+type UpdaterDownloadOptions = DownloadOptions & UpdaterProxyOptions
+
+const buildUpdaterProxyOptions = (
+  enabled: boolean,
+  url: string,
+): UpdaterProxyOptions | undefined => {
+  const proxy = enabled ? url.trim() : ''
+  return proxy ? { proxy } : undefined
+}
 
 type SettingsPageProps = {
   isTauri: boolean
@@ -62,6 +76,10 @@ const SettingsPage = ({
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const updateRef = useRef<Update | null>(null)
+  const updaterProxyOptions = useMemo(
+    () => buildUpdaterProxyOptions(githubProxyConfig.enabled, githubProxyConfig.url),
+    [githubProxyConfig.enabled, githubProxyConfig.url],
+  )
 
   const handleCheckUpdate = useCallback(async () => {
     if (!isTauri) return
@@ -69,7 +87,7 @@ const SettingsPage = ({
     setUpdateError(null)
     try {
       const { check } = await import('@tauri-apps/plugin-updater')
-      const update = await check()
+      const update = await check(updaterProxyOptions)
       if (update) {
         updateRef.current = update
         setUpdateVersion(update.version)
@@ -81,7 +99,7 @@ const SettingsPage = ({
       setUpdateError(err instanceof Error ? err.message : String(err))
       setUpdateStatus('error')
     }
-  }, [isTauri])
+  }, [isTauri, updaterProxyOptions])
 
   const handleInstallUpdate = useCallback(async () => {
     const update = updateRef.current
@@ -89,13 +107,16 @@ const SettingsPage = ({
     setUpdateStatus('downloading')
     setUpdateError(null)
     try {
-      await update.downloadAndInstall()
+      await update.downloadAndInstall(
+        undefined,
+        updaterProxyOptions as UpdaterDownloadOptions | undefined,
+      )
       setUpdateStatus('done')
     } catch (err) {
       setUpdateError(err instanceof Error ? err.message : String(err))
       setUpdateStatus('error')
     }
-  }, [])
+  }, [updaterProxyOptions])
 
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const versionText = useMemo(() => {
@@ -122,6 +143,18 @@ const SettingsPage = ({
     void loadAppVersion()
     return () => { updateRef.current = null }
   }, [loadAppVersion])
+
+  const handleOpenProject = useCallback(async () => {
+    try {
+      if (isTauri) {
+        await openUrl(PROJECT_REPOSITORY_URL)
+      } else {
+        window.open(PROJECT_REPOSITORY_URL, '_blank', 'noopener,noreferrer')
+      }
+    } catch {
+      toast.error(t('projectLink.openFailed'))
+    }
+  }, [isTauri, t])
 
   return (
     <div className="settings-page">
@@ -342,6 +375,21 @@ const SettingsPage = ({
               </div>
             </div>
             <div className="settings-card-body">
+              <div className="settings-project-row">
+                <div className="settings-item-info">
+                  <div className="settings-item-title">{t('projectLink.title')}</div>
+                  <div className="settings-item-desc">{t('projectLink.description')}</div>
+                </div>
+                <button
+                  className="btn btn-secondary btn-sm settings-project-link"
+                  type="button"
+                  onClick={() => void handleOpenProject()}
+                  aria-label={t('projectLink.open')}
+                >
+                  {t('projectLink.view')}
+                  <ExternalLink size={14} />
+                </button>
+              </div>
               <div className="settings-field">
                 <label className="settings-label" htmlFor="settings-github-token">
                   {t('githubToken')}

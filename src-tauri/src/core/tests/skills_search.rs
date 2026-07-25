@@ -39,7 +39,7 @@ fn parses_search_results() {
         .with_body(json_response())
         .create();
 
-    let out = search_skills_online_inner(&server.url(), "react", 20).unwrap();
+    let out = search_skills_online_inner(&server.url(), "react", 20, "").unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].name, "react-expert");
     assert_eq!(out[0].installs, 203000);
@@ -64,7 +64,7 @@ fn source_url_is_constructed_from_source() {
         .with_body(json_response())
         .create();
 
-    let out = search_skills_online_inner(&server.url(), "vue", 5).unwrap();
+    let out = search_skills_online_inner(&server.url(), "vue", 5, "").unwrap();
     assert_eq!(out[1].source_url, "https://github.com/vuejs/vue-skills");
 }
 
@@ -77,7 +77,7 @@ fn http_error_returns_error() {
         .with_body("internal error")
         .create();
 
-    let err = search_skills_online_inner(&server.url(), "test", 10).unwrap_err();
+    let err = search_skills_online_inner(&server.url(), "test", 10, "").unwrap_err();
     let msg = format!("{:#}", err);
     assert!(msg.contains("skills.sh search returned error"), "{}", msg);
 }
@@ -96,6 +96,6 @@ fn empty_results() {
         .with_body(json_empty())
         .create();
 
-    let out = search_skills_online_inner(&server.url(), "nonexistent", 10).unwrap();
+    let out = search_skills_online_inner(&server.url(), "nonexistent", 10, "").unwrap();
     assert!(out.is_empty());
 }

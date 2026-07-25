@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::core::sync_engine::{
     copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
-    sync_dir_hybrid_with_overwrite, SyncMode,
+    sync_dir_hybrid_with_overwrite, sync_dir_with_mode_with_overwrite, SyncMode,
 };
 
 #[test]
@@ -77,17 +77,55 @@ fn cursor_sync_forces_copy() {
 #[test]
 fn kiro_cli_sync_forces_copy() {
     let src_dir = tempfile::tempdir().unwrap();
-    fs::create_dir_all(src_dir.path().join("s")).unwrap();
-    fs::write(src_dir.path().join("s/a.txt"), b"ok").unwrap();
-
+    fs::write(src_dir.path().join("a.txt"), b"ok").unwrap();
     let dst_dir = tempfile::tempdir().unwrap();
     let target = dst_dir.path().join("t");
 
-    // Kiro 的扫描器会跳过符号链接，必须强制 copy 成真实目录。
     let out = sync_dir_for_tool_with_overwrite("kiro_cli", src_dir.path(), &target, false).unwrap();
+
     assert!(matches!(out.mode_used, SyncMode::Copy));
-    assert!(target.join("s/a.txt").exists());
-    assert_eq!(fs::read(target.join("s/a.txt")).unwrap(), b"ok");
+    assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"ok");
+}
+
+#[test]
+fn explicit_copy_mode_copies_directory() {
+    let src_dir = tempfile::tempdir().unwrap();
+    fs::write(src_dir.path().join("a.txt"), b"ok").unwrap();
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let out =
+        sync_dir_with_mode_with_overwrite(SyncMode::Copy, src_dir.path(), &target, false).unwrap();
+
+    assert_eq!(out.mode_used, SyncMode::Copy);
+    assert_eq!(fs::read(target.join("a.txt")).unwrap(), b"ok");
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_symlink_mode_creates_symlink() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let out = sync_dir_with_mode_with_overwrite(SyncMode::Symlink, src_dir.path(), &target, false)
+        .unwrap();
+
+    assert_eq!(out.mode_used, SyncMode::Symlink);
+    assert_eq!(fs::read_link(&target).unwrap(), src_dir.path());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn explicit_junction_mode_reports_unsupported_platform() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let dst_dir = tempfile::tempdir().unwrap();
+    let target = dst_dir.path().join("t");
+
+    let err = sync_dir_with_mode_with_overwrite(SyncMode::Junction, src_dir.path(), &target, false)
+        .unwrap_err();
+
+    assert!(err.to_string().contains("junction not supported"));
 }
 
 #[cfg(unix)]

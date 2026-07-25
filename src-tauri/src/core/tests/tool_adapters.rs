@@ -1,10 +1,166 @@
 use std::fs;
 
+use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
+use crate::core::sync_engine::SyncMode;
 use crate::core::tool_adapters::{
     adapter_by_key, adapters_sharing_project_skills_dir, adapters_sharing_skills_dir,
-    project_relative_skills_dir, resolve_project_path, scan_tool_dir, supports_project_scope,
-    ToolAdapter, ToolId,
+    load_tool_config, project_relative_skills_dir, resolve_project_path, save_tool_config,
+    scan_tool_dir, supports_project_scope, CustomToolConfig, ToolAdapter, ToolConfig, ToolId,
 };
+
+fn make_custom_tool(key: &str, label: &str, skills_dir: &str) -> CustomToolConfig {
+    CustomToolConfig {
+        key: key.to_string(),
+        label: label.to_string(),
+        avatar: None,
+        skills_dir: skills_dir.to_string(),
+        project_skills_dir: Some(".agents/skills".to_string()),
+        sync_mode: SyncMode::Copy,
+        enabled: true,
+    }
+}
+
+#[test]
+fn saving_changed_custom_tool_migrates_existing_targets_and_preserves_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SkillStore::new(dir.path().join("test.db"));
+    store.ensure_schema().unwrap();
+
+    let central = dir.path().join("central/skill-a");
+    fs::create_dir_all(&central).unwrap();
+    fs::write(central.join("SKILL.md"), "# Skill A").unwrap();
+    let old_root = dir.path().join("old-tools");
+    let new_root = dir.path().join("new-tools");
+
+    save_tool_config(
+        &store,
+        ToolConfig {
+            disabled_builtin_tools: Vec::new(),
+            custom_tools: vec![make_custom_tool(
+                "custom_casey",
+                "Casey",
+                old_root.to_string_lossy().as_ref(),
+            )],
+        },
+    )
+    .unwrap();
+
+    store
+        .upsert_skill(&SkillRecord {
+            id: "skill-a".to_string(),
+            name: "skill-a".to_string(),
+            description: None,
+            source_type: "local".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: central.to_string_lossy().to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            enabled: true,
+            status: "ok".to_string(),
+            collection: None,
+        })
+        .unwrap();
+    let old_target = old_root.join("skill-a");
+    fs::create_dir_all(&old_target).unwrap();
+    fs::copy(central.join("SKILL.md"), old_target.join("SKILL.md")).unwrap();
+    store
+        .upsert_skill_target(&SkillTargetRecord {
+            id: "target-a".to_string(),
+            skill_id: "skill-a".to_string(),
+            tool: "custom_casey".to_string(),
+            scope: "global".to_string(),
+            project_path: None,
+            target_path: old_target.to_string_lossy().to_string(),
+            mode: "copy".to_string(),
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: Some(1),
+        })
+        .unwrap();
+
+    save_tool_config(
+        &store,
+        ToolConfig {
+            disabled_builtin_tools: Vec::new(),
+            custom_tools: vec![make_custom_tool(
+                "custom_casey",
+                "Casey Updated",
+                new_root.to_string_lossy().as_ref(),
+            )],
+        },
+    )
+    .unwrap();
+
+    let new_target = new_root.join("skill-a");
+    assert!(!old_target.exists());
+    assert_eq!(
+        fs::read_to_string(new_target.join("SKILL.md")).unwrap(),
+        "# Skill A"
+    );
+    let target = store
+        .get_skill_target("skill-a", "custom_casey", "global", None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(target.target_path, new_target.to_string_lossy());
+    assert_eq!(target.mode, "copy");
+    let config = load_tool_config(&store).unwrap();
+    assert_eq!(config.custom_tools[0].key, "custom_casey");
+    assert_eq!(config.custom_tools[0].label, "Casey Updated");
+
+    #[cfg(unix)]
+    {
+        let mut edited = make_custom_tool(
+            "custom_casey",
+            "Casey Updated",
+            new_root.to_string_lossy().as_ref(),
+        );
+        edited.sync_mode = SyncMode::Symlink;
+        save_tool_config(
+            &store,
+            ToolConfig {
+                disabled_builtin_tools: Vec::new(),
+                custom_tools: vec![edited],
+            },
+        )
+        .unwrap();
+
+        assert!(fs::symlink_metadata(&new_target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let target = store
+            .get_skill_target("skill-a", "custom_casey", "global", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.mode, "symlink");
+    }
+}
+
+#[test]
+fn legacy_custom_tool_config_defaults_avatar_and_sync_mode() {
+    let config: ToolConfig = serde_json::from_str(
+        r#"{
+          "disabled_builtin_tools": [],
+          "custom_tools": [{
+            "key": "custom_legacy",
+            "label": "Legacy",
+            "skills_dir": "~/.legacy/skills",
+            "project_skills_dir": null,
+            "enabled": true
+          }]
+        }"#,
+    )
+    .unwrap();
+
+    let tool = &config.custom_tools[0];
+    assert_eq!(tool.avatar, None);
+    assert_eq!(tool.sync_mode, SyncMode::Auto);
+}
 
 #[test]
 fn adapter_by_key_finds_known_tool() {

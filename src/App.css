@@ -3217,6 +3217,12 @@
   background: var(--bg-muted);
 }
 
+.tool-card.editing {
+  border-color: var(--accent-primary);
+  background: var(--accent-soft-bg);
+  box-shadow: 0 0 0 1px var(--accent-soft-border);
+}
+
 .tool-card-head {
   display: flex;
   align-items: center;
@@ -3227,6 +3233,7 @@
 .tool-card-title {
   min-width: 0;
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
 }
@@ -3244,6 +3251,48 @@
   font-weight: 800;
 }
 
+.tool-brand-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 8px;
+  line-height: 1;
+  user-select: none;
+}
+
+.tool-brand-icon.has-logo {
+  background: #fff;
+}
+
+.tool-brand-icon img {
+  width: 78%;
+  height: 78%;
+  display: block;
+  object-fit: contain;
+}
+
+.tool-brand-icon.custom-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tool-brand-icon.fallback {
+  background: color-mix(in srgb, var(--tool-brand) 13%, var(--bg-panel));
+  color: var(--tool-brand);
+  border: 1px solid color-mix(in srgb, var(--tool-brand) 22%, transparent);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+}
+
+.tool-brand-icon.tool-card-avatar {
+  border-radius: 8px;
+}
+
 .tool-card-badges {
   display: flex;
   align-items: center;
@@ -3259,6 +3308,30 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-card-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tool-card-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-card-footer .icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.tool-card-footer .icon-btn:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
 }
 
 .tools-missing-section {
@@ -3488,13 +3561,18 @@
 }
 
 .tool-management-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
 }
 
 .tool-management-status,
-.tool-management-custom {
+.tool-management-custom,
+.tool-management-mode {
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 11px;
@@ -3517,6 +3595,11 @@
   background: var(--accent-soft-bg);
 }
 
+.tool-management-mode {
+  color: var(--text-secondary);
+  background: var(--bg-muted);
+}
+
 .tool-management-path {
   color: var(--text-tertiary);
   font-size: 12px;
@@ -3536,6 +3619,126 @@
   grid-template-columns: 1fr;
   gap: 8px;
   padding-top: 4px;
+}
+
+.custom-tool-avatar-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 4px 0 8px;
+}
+
+.custom-tool-avatar-picker {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.custom-tool-avatar-picker .custom-tool-avatar-preview {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.custom-tool-avatar-picker:hover .custom-tool-avatar-preview {
+  border-color: var(--accent-primary);
+}
+
+.custom-tool-avatar-picker:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.custom-tool-avatar-edit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--bg-panel);
+  border-radius: 999px;
+  color: var(--accent-primary-fg);
+  background: var(--accent-primary);
+}
+
+.custom-tool-avatar-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.custom-tool-avatar-copy strong,
+.custom-tool-mode-field > span {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.custom-tool-avatar-copy small,
+.custom-tool-mode-field small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.custom-tool-avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.custom-tool-avatar-action {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.custom-tool-avatar-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.custom-tool-avatar-copy .custom-tool-avatar-error {
+  color: var(--status-error);
+}
+
+.custom-tool-mode-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.custom-tool-form-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.custom-tool-form-actions .btn {
+  justify-content: center;
 }
 
 .tool-management-add-btn {
@@ -3569,6 +3772,9 @@
 }
 
 .settings-card .settings-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: start;
   padding: 0;
   border-bottom: none;
 }
@@ -3596,9 +3802,28 @@
   line-height: 1.4;
 }
 
+.settings-project-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.settings-project-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .settings-toggle {
   width: 44px;
+  min-width: 44px;
   height: 24px;
+  flex: 0 0 44px;
+  align-self: start;
   background: var(--bg-element);
   border-radius: 999px;
   border: 1px solid var(--border-subtle);

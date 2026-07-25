@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::skill_store::SkillStore;
+use super::skill_store::{SkillStore, SkillTargetRecord};
+use super::sync_engine::{remove_path_any, sync_dir_with_mode_with_overwrite, SyncMode};
 
 pub const TOOL_CONFIG_SETTING: &str = "tool_config_v1";
 
@@ -124,8 +125,12 @@ pub struct ToolAdapter {
 pub struct CustomToolConfig {
     pub key: String,
     pub label: String,
+    #[serde(default)]
+    pub avatar: Option<String>,
     pub skills_dir: String,
     pub project_skills_dir: Option<String>,
+    #[serde(default)]
+    pub sync_mode: SyncMode,
     pub enabled: bool,
 }
 
@@ -156,10 +161,178 @@ pub fn load_tool_config(store: &SkillStore) -> Result<ToolConfig> {
 }
 
 pub fn save_tool_config(store: &SkillStore, config: ToolConfig) -> Result<ToolConfig> {
+    let previous = load_tool_config(store)?;
     let config = sanitize_tool_config(config)?;
     ensure_enabled_custom_tool_dirs(&config)?;
+    migrate_changed_custom_tool_targets(store, &previous, &config)?;
     store.set_setting(TOOL_CONFIG_SETTING, &serde_json::to_string(&config)?)?;
     Ok(config)
+}
+
+fn migrate_changed_custom_tool_targets(
+    store: &SkillStore,
+    previous: &ToolConfig,
+    next: &ToolConfig,
+) -> Result<()> {
+    let previous_by_key = previous
+        .custom_tools
+        .iter()
+        .map(|tool| (tool.key.as_str(), tool))
+        .collect::<std::collections::HashMap<_, _>>();
+
+    for next_tool in &next.custom_tools {
+        let Some(previous_tool) = previous_by_key.get(next_tool.key.as_str()) else {
+            continue;
+        };
+        if previous_tool.skills_dir == next_tool.skills_dir
+            && previous_tool.project_skills_dir == next_tool.project_skills_dir
+            && previous_tool.sync_mode == next_tool.sync_mode
+        {
+            continue;
+        }
+
+        for target in store.list_skill_targets_by_tool(&next_tool.key)? {
+            if target.status == "disabled" {
+                continue;
+            }
+            migrate_custom_tool_target(store, next_tool, &target)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn migrate_custom_tool_target(
+    store: &SkillStore,
+    tool: &CustomToolConfig,
+    target: &SkillTargetRecord,
+) -> Result<()> {
+    let skill = store
+        .get_skill_by_id(&target.skill_id)?
+        .with_context(|| format!("skill not found for target {}", target.id))?;
+    let source = PathBuf::from(&skill.central_path);
+    if !source.is_dir() {
+        anyhow::bail!("managed skill directory not found: {:?}", source);
+    }
+
+    let target_name = Path::new(&target.target_path)
+        .file_name()
+        .with_context(|| format!("invalid target path: {}", target.target_path))?;
+    let root = if target.scope == "project" {
+        let project_path = target
+            .project_path
+            .as_deref()
+            .context("project target is missing its project path")?;
+        let relative = tool.project_skills_dir.as_deref().with_context(|| {
+            format!(
+                "custom tool {} still has project Skills synced; set a project directory before saving",
+                tool.label
+            )
+        })?;
+        PathBuf::from(project_path).join(relative)
+    } else {
+        expand_custom_tool_path(&tool.skills_dir)?
+    };
+    let next_target = root.join(target_name);
+    let previous_target = PathBuf::from(&target.target_path);
+    let same_path = next_target == previous_target;
+    let shared_target =
+        store.is_skill_target_path_used_by_another_record(&target.target_path, &target.id)?;
+
+    // A shared physical target must keep its current representation because changing it would
+    // also mutate the other tool's live target. The selected mode still applies to future paths.
+    if same_path && shared_target {
+        return Ok(());
+    }
+
+    if !same_path && std::fs::symlink_metadata(&next_target).is_ok() {
+        anyhow::bail!("new custom tool target already exists: {:?}", next_target);
+    }
+
+    let requested_mode = sync_mode_key(tool.sync_mode);
+    let force_mode_recreate =
+        same_path && tool.sync_mode != SyncMode::Auto && target.mode != requested_mode;
+    if force_mode_recreate {
+        remove_path_any(&previous_target)
+            .with_context(|| format!("remove old target {:?}", previous_target))?;
+    }
+    let outcome = sync_dir_with_mode_with_overwrite(
+        tool.sync_mode,
+        &source,
+        &next_target,
+        same_path && !force_mode_recreate,
+    )
+    .with_context(|| {
+        format!(
+            "migrate custom tool target {:?} -> {:?}",
+            previous_target, next_target
+        )
+    });
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            if force_mode_recreate {
+                if let Some(previous_mode) = parse_sync_mode(&target.mode) {
+                    let _ = sync_dir_with_mode_with_overwrite(
+                        previous_mode,
+                        &source,
+                        &previous_target,
+                        false,
+                    );
+                }
+            }
+            return Err(err);
+        }
+    };
+
+    if !same_path && !shared_target {
+        if let Err(err) = remove_path_any(&previous_target) {
+            let _ = remove_path_any(&next_target);
+            return Err(err).with_context(|| format!("remove old target {:?}", previous_target));
+        }
+    }
+
+    let migrated = SkillTargetRecord {
+        id: target.id.clone(),
+        skill_id: target.skill_id.clone(),
+        tool: target.tool.clone(),
+        scope: target.scope.clone(),
+        project_path: target.project_path.clone(),
+        target_path: outcome.target_path.to_string_lossy().to_string(),
+        mode: sync_mode_key(outcome.mode_used).to_string(),
+        status: "ok".to_string(),
+        last_error: None,
+        synced_at: Some(current_time_ms()),
+    };
+    store.upsert_skill_target(&migrated)?;
+
+    Ok(())
+}
+
+fn sync_mode_key(mode: SyncMode) -> &'static str {
+    match mode {
+        SyncMode::Auto => "auto",
+        SyncMode::Symlink => "symlink",
+        SyncMode::Junction => "junction",
+        SyncMode::Copy => "copy",
+    }
+}
+
+fn parse_sync_mode(mode: &str) -> Option<SyncMode> {
+    match mode {
+        "auto" => Some(SyncMode::Auto),
+        "symlink" => Some(SyncMode::Symlink),
+        "junction" => Some(SyncMode::Junction),
+        "copy" => Some(SyncMode::Copy),
+        _ => None,
+    }
+}
+
+fn current_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
 
 pub fn is_builtin_tool_enabled(config: &ToolConfig, key: &str) -> bool {
@@ -216,6 +389,10 @@ fn sanitize_tool_config(mut config: ToolConfig) -> Result<ToolConfig> {
     for mut tool in config.custom_tools {
         tool.key = tool.key.trim().to_string();
         tool.label = tool.label.trim().to_string();
+        tool.avatar = tool
+            .avatar
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         tool.skills_dir = tool.skills_dir.trim().to_string();
         tool.project_skills_dir = tool
             .project_skills_dir
@@ -242,6 +419,14 @@ fn sanitize_tool_config(mut config: ToolConfig) -> Result<ToolConfig> {
         }
         if tool.skills_dir.is_empty() {
             anyhow::bail!("custom tool skills directory is required");
+        }
+        if let Some(avatar) = &tool.avatar {
+            if !avatar.starts_with("data:image/") {
+                anyhow::bail!("custom tool avatar must be an image data URL");
+            }
+            if avatar.len() > 512 * 1024 {
+                anyhow::bail!("custom tool avatar is too large");
+            }
         }
         custom_tools.push(tool);
     }

@@ -31,7 +31,7 @@ use crate::core::installer::{
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
 use crate::core::network_proxy::{
-    get_github_proxy_config as get_github_proxy_config_core,
+    app_http_client, get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
     set_github_proxy_config as set_github_proxy_config_core,
     set_github_proxy_url as set_github_proxy_url_core, GithubProxyConfig,
@@ -44,7 +44,8 @@ use crate::core::skills_search::{
     search_skills_online as search_skills_online_core, OnlineSkillResult,
 };
 use crate::core::sync_engine::{
-    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid, SyncMode,
+    copy_dir_recursive, sync_dir_for_tool_with_overwrite, sync_dir_hybrid,
+    sync_dir_with_mode_with_overwrite, SyncMode,
 };
 use crate::core::system_scheduler::{
     current_scheduler_config, get_auto_update_task_status, install_auto_update_task,
@@ -223,12 +224,14 @@ fn format_anyhow_error(err: anyhow::Error) -> String {
 pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
+    pub avatar: Option<String>,
     pub installed: bool,
     pub enabled: bool,
     pub is_custom: bool,
     pub skills_dir: String,
     pub project_skills_dir: String,
     pub supports_project_scope: bool,
+    pub sync_mode: SyncMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -242,12 +245,14 @@ pub struct ToolStatusDto {
 struct RuntimeTool {
     key: String,
     label: String,
+    avatar: Option<String>,
     installed: bool,
     enabled: bool,
     is_custom: bool,
     skills_dir: std::path::PathBuf,
     project_skills_dir: String,
     supports_project_scope: bool,
+    sync_mode: SyncMode,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -260,8 +265,10 @@ pub struct ToolConfigDto {
 pub struct CustomToolConfigDto {
     pub key: String,
     pub label: String,
+    pub avatar: Option<String>,
     pub skills_dir: String,
     pub project_skills_dir: Option<String>,
+    pub sync_mode: SyncMode,
     pub enabled: bool,
 }
 
@@ -275,8 +282,10 @@ impl From<ToolConfig> for ToolConfigDto {
                 .map(|tool| CustomToolConfigDto {
                     key: tool.key,
                     label: tool.label,
+                    avatar: tool.avatar,
                     skills_dir: tool.skills_dir,
                     project_skills_dir: tool.project_skills_dir,
+                    sync_mode: tool.sync_mode,
                     enabled: tool.enabled,
                 })
                 .collect(),
@@ -294,8 +303,10 @@ impl From<ToolConfigDto> for ToolConfig {
                 .map(|tool| CustomToolConfig {
                     key: tool.key,
                     label: tool.label,
+                    avatar: tool.avatar,
                     skills_dir: tool.skills_dir,
                     project_skills_dir: tool.project_skills_dir,
+                    sync_mode: tool.sync_mode,
                     enabled: tool.enabled,
                 })
                 .collect(),
@@ -316,12 +327,14 @@ fn runtime_tools(store: &SkillStore, include_disabled: bool) -> anyhow::Result<V
         tools.push(RuntimeTool {
             key: adapter.id.as_key().to_string(),
             label: adapter.display_name.to_string(),
+            avatar: None,
             installed: enabled && detected,
             enabled,
             is_custom: false,
             skills_dir: resolve_default_path(&adapter)?,
             project_skills_dir: project_relative_skills_dir(&adapter).to_string(),
             supports_project_scope: supports_project_scope(&adapter),
+            sync_mode: SyncMode::Auto,
         });
     }
 
@@ -335,12 +348,14 @@ fn runtime_tools(store: &SkillStore, include_disabled: bool) -> anyhow::Result<V
         tools.push(RuntimeTool {
             key: custom.key,
             label: custom.label,
+            avatar: custom.avatar,
             installed: custom.enabled && detected,
             enabled: custom.enabled,
             is_custom: true,
             skills_dir,
             project_skills_dir: custom.project_skills_dir.unwrap_or_default(),
             supports_project_scope,
+            sync_mode: custom.sync_mode,
         });
     }
 
@@ -625,12 +640,14 @@ pub async fn get_tool_status(store: State<'_, SkillStore>) -> Result<ToolStatusD
             tools.push(ToolInfoDto {
                 key: tool.key.clone(),
                 label: tool.label,
+                avatar: tool.avatar,
                 installed: tool.installed,
                 enabled: tool.enabled,
                 is_custom: tool.is_custom,
                 skills_dir: tool.skills_dir.to_string_lossy().to_string(),
                 project_skills_dir: tool.project_skills_dir,
                 supports_project_scope: tool.supports_project_scope,
+                sync_mode: tool.sync_mode,
             });
             if tool.installed {
                 installed.push(tool.key);
@@ -1284,25 +1301,33 @@ pub async fn sync_skill_to_tool(
         let overwrite = overwrite.unwrap_or(false)
             || (overwriteIfSameContent.unwrap_or(false)
                 && target_has_same_content(sourcePath.as_ref(), &target));
-        let result =
+        let result = (if runtime_tool.is_custom {
+            sync_dir_with_mode_with_overwrite(
+                runtime_tool.sync_mode,
+                sourcePath.as_ref(),
+                &target,
+                overwrite,
+            )
+        } else {
             sync_dir_for_tool_with_overwrite(&tool, sourcePath.as_ref(), &target, overwrite)
-                .map_err(|err| {
-                    let msg = err.to_string();
-                    if msg.contains("target already exists") {
-                        anyhow::anyhow!("TARGET_EXISTS|{}", target.to_string_lossy())
-                    } else if msg.contains("os error 5")
-                        || msg.contains("Access is denied")
-                        || msg.contains("Permission denied")
-                    {
-                        anyhow::anyhow!(
-                            "TOOL_NOT_WRITABLE|{}|{}",
-                            runtime_tool.label,
-                            tool_root.to_string_lossy()
-                        )
-                    } else {
-                        anyhow::anyhow!(msg)
-                    }
-                })?;
+        })
+        .map_err(|err| {
+            let msg = err.to_string();
+            if msg.contains("target already exists") {
+                anyhow::anyhow!("TARGET_EXISTS|{}", target.to_string_lossy())
+            } else if msg.contains("os error 5")
+                || msg.contains("Access is denied")
+                || msg.contains("Permission denied")
+            {
+                anyhow::anyhow!(
+                    "TOOL_NOT_WRITABLE|{}|{}",
+                    runtime_tool.label,
+                    tool_root.to_string_lossy()
+                )
+            } else {
+                anyhow::anyhow!(msg)
+            }
+        })?;
 
         // Some tools share the same skills directory; keep DB records consistent across them.
         let group = runtime_tools_sharing_dir(&store, &runtime_tool, scope)?;
@@ -1523,6 +1548,47 @@ pub async fn search_github(
             Some(token.as_str())
         };
         search_github_repos(&query, limit, token_opt, &proxy_url)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubReleaseApiResponse {
+    body: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_github_release_notes(
+    store: State<'_, SkillStore>,
+    version: String,
+) -> Result<Option<String>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let proxy_url = get_github_proxy_url_core(&store)?;
+        let tag = format!("v{}", version.trim().trim_start_matches('v'));
+        let url = format!(
+            "https://api.github.com/repos/qufei1993/skills-hub/releases/tags/{}",
+            urlencoding::encode(&tag)
+        );
+        let client = app_http_client(&proxy_url, Some(20))?;
+        let response = client
+            .get(url)
+            .header("User-Agent", "skills-hub")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .context("GitHub release notes request failed")?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let response = response
+            .error_for_status()
+            .context("GitHub release notes returned error")?;
+        let result: GithubReleaseApiResponse = response
+            .json()
+            .context("parse GitHub release notes response")?;
+        Ok(result.body)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2081,12 +2147,15 @@ impl From<OnlineSkillResult> for OnlineSkillDto {
 
 #[tauri::command]
 pub async fn search_skills_online(
+    store: State<'_, SkillStore>,
     query: String,
     limit: Option<u32>,
 ) -> Result<Vec<OnlineSkillDto>, String> {
+    let store = store.inner().clone();
     let limit = limit.unwrap_or(20) as usize;
     tauri::async_runtime::spawn_blocking(move || {
-        let results = search_skills_online_core(&query, limit)?;
+        let proxy_url = get_github_proxy_url_core(&store)?;
+        let results = search_skills_online_core(&query, limit, &proxy_url)?;
         Ok::<_, anyhow::Error>(results.into_iter().map(OnlineSkillDto::from).collect())
     })
     .await

@@ -13,7 +13,7 @@ type ExplorePageProps = {
   loading: boolean
   onExploreFilterChange: (value: string) => void
   onInstallSkill: (sourceUrl: string, skillName?: string) => void
-  onOpenManualAdd: () => void
+  onOpenManualAdd: (tab?: 'git' | 'local') => void
   t: TFunction
 }
 
@@ -212,6 +212,17 @@ const ExplorePage = ({
 
   return (
     <div className="explore-page">
+      <div className="explore-tabs" role="tablist" aria-label={t('addSkills')}>
+        <button className="active" type="button" role="tab" aria-selected="true">
+          {t('exploreTabs.online')}
+        </button>
+        <button type="button" role="tab" aria-selected="false" onClick={() => onOpenManualAdd('git')}>
+          {t('exploreTabs.git')}
+        </button>
+        <button type="button" role="tab" aria-selected="false" onClick={() => onOpenManualAdd('local')}>
+          {t('exploreTabs.local')}
+        </button>
+      </div>
       <div className="explore-hero">
         <div className="explore-search-row">
           <div className="explore-search-wrap">
@@ -226,7 +237,7 @@ const ExplorePage = ({
           <button
             className="btn btn-secondary explore-manual-btn"
             type="button"
-            onClick={onOpenManualAdd}
+            onClick={() => onOpenManualAdd('git')}
             disabled={loading}
           >
             <Plus size={15} />

@@ -86,15 +86,19 @@ fn saving_custom_tool_config_creates_enabled_skills_dir() {
                 CustomToolConfig {
                     key: "custom_existing".to_string(),
                     label: "Existing".to_string(),
+                    avatar: Some("data:image/png;base64,AA==".to_string()),
                     skills_dir: existing.to_string_lossy().to_string(),
                     project_skills_dir: None,
+                    sync_mode: SyncMode::Auto,
                     enabled: true,
                 },
                 CustomToolConfig {
                     key: "custom_created".to_string(),
                     label: "Created".to_string(),
+                    avatar: None,
                     skills_dir: created.to_string_lossy().to_string(),
                     project_skills_dir: None,
+                    sync_mode: SyncMode::Copy,
                     enabled: true,
                 },
             ],
@@ -115,8 +119,14 @@ fn saving_custom_tool_config_creates_enabled_skills_dir() {
 
     assert!(existing_tool.enabled);
     assert!(existing_tool.installed);
+    assert_eq!(
+        existing_tool.avatar.as_deref(),
+        Some("data:image/png;base64,AA==")
+    );
+    assert_eq!(existing_tool.sync_mode, SyncMode::Auto);
     assert!(created_tool.enabled);
     assert!(created_tool.installed);
+    assert_eq!(created_tool.sync_mode, SyncMode::Copy);
 }
 
 #[test]

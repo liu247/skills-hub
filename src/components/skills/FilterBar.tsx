@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpDown, Check, CheckSquare, ChevronDown, Search, Tags } from 'lucide-react'
+import { ArrowUpDown, Check, CheckSquare, ChevronDown, LayoutGrid, List, Search, Tags } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { TagWithCountDto } from './types'
 
@@ -14,6 +14,7 @@ type FilterBarProps = {
   totalCount: number
   bulkMode: boolean
   bulkSelectedCount: number
+  viewMode: 'list' | 'cards'
   onSortChange: (value: 'updated' | 'name') => void
   onSearchChange: (value: string) => void
   onScopeFilterChange: (value: 'all' | 'global' | 'project') => void
@@ -22,6 +23,7 @@ type FilterBarProps = {
   onClearTags: () => void
   onManageTags: () => void
   onToggleBulkMode: () => void
+  onViewModeChange: (value: 'list' | 'cards') => void
   t: TFunction
 }
 
@@ -36,6 +38,7 @@ const FilterBar = ({
   totalCount,
   bulkMode,
   bulkSelectedCount,
+  viewMode,
   onSortChange,
   onSearchChange,
   onScopeFilterChange,
@@ -44,6 +47,7 @@ const FilterBar = ({
   onClearTags,
   onManageTags,
   onToggleBulkMode,
+  onViewModeChange,
   t,
 }: FilterBarProps) => {
   const [tagMenuOpen, setTagMenuOpen] = useState(false)
@@ -180,6 +184,28 @@ const FilterBar = ({
               </div>
             </div>
           ) : null}
+        </div>
+        <div className="view-mode-toggle" role="group" aria-label={t('viewMode.label')}>
+          <button
+            className={viewMode === 'list' ? 'active' : ''}
+            type="button"
+            onClick={() => onViewModeChange('list')}
+            aria-label={t('viewMode.list')}
+            title={t('viewMode.list')}
+            aria-pressed={viewMode === 'list'}
+          >
+            <List size={15} />
+          </button>
+          <button
+            className={viewMode === 'cards' ? 'active' : ''}
+            type="button"
+            onClick={() => onViewModeChange('cards')}
+            aria-label={t('viewMode.cards')}
+            title={t('viewMode.cards')}
+            aria-pressed={viewMode === 'cards'}
+          >
+            <LayoutGrid size={15} />
+          </button>
         </div>
         <div className="search-container">
           <Search size={16} className="search-icon-abs" />

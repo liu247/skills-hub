@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use reqwest::blocking::Client;
 use serde::Deserialize;
+
+use super::network_proxy::app_http_client;
 
 #[derive(Debug, Deserialize)]
 struct SkillsShResponse {
@@ -22,16 +23,21 @@ pub struct OnlineSkillResult {
     pub source_url: String,
 }
 
-pub fn search_skills_online(query: &str, limit: usize) -> Result<Vec<OnlineSkillResult>> {
-    search_skills_online_inner("https://skills.sh", query, limit)
+pub fn search_skills_online(
+    query: &str,
+    limit: usize,
+    proxy_url: &str,
+) -> Result<Vec<OnlineSkillResult>> {
+    search_skills_online_inner("https://skills.sh", query, limit, proxy_url)
 }
 
 fn search_skills_online_inner(
     base_url: &str,
     query: &str,
     limit: usize,
+    proxy_url: &str,
 ) -> Result<Vec<OnlineSkillResult>> {
-    let client = Client::new();
+    let client = app_http_client(proxy_url, Some(20))?;
     let base_url = base_url.trim_end_matches('/');
     let url = format!(
         "{}/api/search?q={}&limit={}",

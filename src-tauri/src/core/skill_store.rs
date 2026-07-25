@@ -798,6 +798,56 @@ impl SkillStore {
         })
     }
 
+    pub fn list_skill_targets_by_tool(&self, tool: &str) -> Result<Vec<SkillTargetRecord>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, skill_id, tool, scope, project_path, target_path, mode, status, last_error, synced_at
+         FROM skill_targets
+         WHERE tool = ?1
+         ORDER BY skill_id ASC, scope ASC, project_path ASC",
+            )?;
+            let rows = stmt.query_map(params![tool], |row| {
+                Ok(SkillTargetRecord {
+                    id: row.get(0)?,
+                    skill_id: row.get(1)?,
+                    tool: row.get(2)?,
+                    scope: row.get(3)?,
+                    project_path: row.get(4)?,
+                    target_path: row.get(5)?,
+                    mode: row.get(6)?,
+                    status: row.get(7)?,
+                    last_error: row.get(8)?,
+                    synced_at: row.get(9)?,
+                })
+            })?;
+
+            let mut items = Vec::new();
+            for row in rows {
+                items.push(row?);
+            }
+            Ok(items)
+        })
+    }
+
+    pub fn is_skill_target_path_used_by_another_record(
+        &self,
+        target_path: &str,
+        record_id: &str,
+    ) -> Result<bool> {
+        self.with_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*)
+                 FROM skill_targets
+                 WHERE target_path = ?1
+                   AND id != ?2
+                   AND status != 'disabled'",
+                params![target_path, record_id],
+                |row| row.get(0),
+            )?;
+            Ok(count > 0)
+        })
+    }
+
     pub fn list_all_skill_target_paths(&self) -> Result<Vec<(String, String)>> {
         self.with_conn(|conn| {
             let mut stmt = conn.prepare(

@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Custom tool identity and sync modes**: Custom tools support avatars and explicit automatic, symbolic link, Windows junction, or copy modes. Legacy configurations default to no avatar and automatic mode.
+- **Custom tool editing**: Existing custom tools can update their name, avatar, global/project directories, and sync mode. Active targets migrate to the new directory or representation.
+- **Title bar update status**: The app checks for updates after startup and shows an actionable icon when a new version is available, reusing the existing release notes and installation flow.
+
+### Changed
+- **Tool card action hierarchy**: Custom tool cards keep enable/disable in the top-right corner and move edit/delete actions into a separate footer.
+- **GitHub project entry**: The open-source project link moved to the GitHub & network settings section and opens in the system default browser.
+- **Skill card column sizing**: Card view keeps a stable column width instead of stretching a single filtered result across the content area.
+
+### Fixed
+- **Startup loading overlay**: Initial discovery of importable skills now runs silently in the background instead of briefly showing the “Installing Skills” dialog.
+- **Safe custom target migration**: Directory and sync-mode changes protect shared physical targets and reject invalid configuration when a destination conflicts or migration fails.
+- **External link permission**: Added a Tauri opener permission scoped to the Skills Hub repository, fixing the GitHub project page failing to open.
+
+## [0.7.1] - 2026-07-10
+
+### Fixed
+- **Unified network proxy**: App update checks, update downloads and installation, release notes, and Explore online search now honor the configured network proxy ([PR #91](https://github.com/qufei1993/skills-hub/pull/91)).
+
 ## [0.7.0] - 2026-07-05
 
 ### Added
@@ -181,3 +201,5 @@ All notable changes to this project will be documented in this file.
 
 ### Performance
 - Git import and batch install optimizations: cached clones reduce repeated fetches; timeouts and non‑interactive git improve stability.
+
+[0.7.1]: https://github.com/qufei1993/skills-hub/compare/v0.7.0...v0.7.1

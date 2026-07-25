@@ -25,8 +25,11 @@ export type OnboardingPlan = {
 export type ToolOption = {
   id: string
   label: string
+  avatar?: string | null
   supports_project_scope?: boolean
 }
+
+export type SyncMode = 'auto' | 'symlink' | 'junction' | 'copy'
 
 export type TagDto = {
   id: number
@@ -93,12 +96,14 @@ export type InstallResultDto = {
 export type ToolInfoDto = {
   key: string
   label: string
+  avatar?: string | null
   installed: boolean
   enabled: boolean
   is_custom: boolean
   skills_dir: string
   project_skills_dir: string
   supports_project_scope: boolean
+  sync_mode: SyncMode
 }
 
 export type ToolStatusDto = {
@@ -110,8 +115,10 @@ export type ToolStatusDto = {
 export type CustomToolConfigDto = {
   key: string
   label: string
+  avatar?: string | null
   skills_dir: string
   project_skills_dir?: string | null
+  sync_mode: SyncMode
   enabled: boolean
 }
 
