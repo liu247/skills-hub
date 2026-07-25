@@ -31,3 +31,23 @@ fn rejects_literal_secret_values_from_imported_configuration() {
 
     assert!(format!("{:#}", result.unwrap_err()).contains("references"));
 }
+
+#[test]
+fn parses_codex_toml_configuration() {
+    let candidates = parse_mcp_config(
+        "config.toml",
+        r#"
+            [mcp_servers.docs]
+            command = "npx"
+            args = ["-y", "@example/docs"]
+
+            [mcp_servers.docs.env]
+            DOCS_TOKEN = "${DOCS_TOKEN}"
+        "#,
+    )
+    .unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].name, "docs");
+    assert_eq!(candidates[0].command.as_deref(), Some("npx"));
+}

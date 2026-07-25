@@ -62,8 +62,13 @@ fn is_mcp_config_name(name: &str) -> bool {
 }
 
 pub fn parse_mcp_config(source_path: &str, contents: &str) -> Result<Vec<McpImportCandidate>> {
-    let document: Value = serde_json::from_str(contents)
-        .with_context(|| format!("parse MCP JSON configuration {source_path}"))?;
+    match serde_json::from_str(contents) {
+        Ok(document) => parse_json_config(source_path, document),
+        Err(_) => parse_toml_config(source_path, contents),
+    }
+}
+
+fn parse_json_config(source_path: &str, document: Value) -> Result<Vec<McpImportCandidate>> {
     let root = document
         .as_object()
         .context("MCP configuration must be an object")?;
@@ -78,6 +83,107 @@ pub fn parse_mcp_config(source_path: &str, contents: &str) -> Result<Vec<McpImpo
         .collect::<Result<Vec<_>>>()?;
     candidates.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(candidates)
+}
+
+fn parse_toml_config(source_path: &str, contents: &str) -> Result<Vec<McpImportCandidate>> {
+    let document = contents
+        .parse::<toml_edit::DocumentMut>()
+        .with_context(|| format!("parse MCP TOML configuration {source_path}"))?;
+    let servers = document["mcp_servers"]
+        .as_table()
+        .context("MCP TOML configuration is missing mcp_servers")?;
+    let mut candidates = servers
+        .iter()
+        .map(|(name, item)| {
+            parse_toml_server(
+                source_path,
+                name,
+                item.as_table().context("MCP TOML server must be a table")?,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    candidates.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(candidates)
+}
+
+fn parse_toml_server(
+    source_path: &str,
+    name: &str,
+    server: &toml_edit::Table,
+) -> Result<McpImportCandidate> {
+    let command = server
+        .get("command")
+        .and_then(toml_edit::Item::as_str)
+        .map(str::to_string);
+    let url = server
+        .get("url")
+        .and_then(toml_edit::Item::as_str)
+        .map(str::to_string);
+    let transport = if url.is_some() {
+        McpTransport::Http
+    } else {
+        McpTransport::Stdio
+    };
+    let args = server
+        .get("args")
+        .and_then(toml_edit::Item::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_string)
+                        .context("MCP TOML args must be strings")
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let env = toml_string_map(server.get("env"))?;
+    let headers = toml_string_map(server.get("headers"))?;
+    let input = McpServerInput {
+        name: name.to_string(),
+        transport: transport.clone(),
+        command: command.clone(),
+        args: args.clone(),
+        env: env.clone(),
+        url: url.clone(),
+        headers: headers.clone(),
+    };
+    validate_mcp_server_input(&input)?;
+    Ok(McpImportCandidate {
+        name: name.to_string(),
+        transport: match transport {
+            McpTransport::Stdio => "stdio",
+            McpTransport::Http => "http",
+        }
+        .to_string(),
+        command,
+        args,
+        env,
+        url,
+        headers,
+        source_path: source_path.to_string(),
+    })
+}
+
+fn toml_string_map(item: Option<&toml_edit::Item>) -> Result<BTreeMap<String, String>> {
+    let Some(item) = item else {
+        return Ok(BTreeMap::new());
+    };
+    item.as_table_like()
+        .context("MCP TOML env and headers must be tables")?
+        .iter()
+        .map(|(key, value)| {
+            Ok((
+                key.to_string(),
+                value
+                    .as_str()
+                    .context("MCP TOML values must be strings")?
+                    .to_string(),
+            ))
+        })
+        .collect()
 }
 
 fn parse_server(source_path: &str, name: &str, value: &Value) -> Result<McpImportCandidate> {
