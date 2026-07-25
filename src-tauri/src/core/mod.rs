@@ -10,6 +10,7 @@ pub mod github_download;
 pub mod github_search;
 pub mod installer;
 pub mod mcp;
+pub mod mcp_bridge;
 pub mod network_proxy;
 pub mod onboarding;
 pub mod skill_files;
@@ -27,3 +28,7 @@ mod mcp_tests;
 #[cfg(test)]
 #[path = "tests/credential_store.rs"]
 mod credential_store_tests;
+
+#[cfg(test)]
+#[path = "tests/mcp_bridge.rs"]
+mod mcp_bridge_tests;
