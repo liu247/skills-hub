@@ -1,4 +1,4 @@
-use crate::core::mcp_adapters::{render_server, McpHost};
+use crate::core::mcp_adapters::{render_server, BridgeRuntime, McpHost};
 use crate::core::skill_store::McpServerRecord;
 
 #[test]
@@ -14,8 +14,20 @@ fn secret_bearing_stdio_renders_bridge_for_all_hosts() {
         McpHost::Kiro,
         McpHost::Reasonix,
     ] {
-        let rendered = render_server(host, &server, Some(8765)).unwrap();
-        assert!(rendered.contains("skills-hub-mcp-bridge"));
+        let rendered = render_server(
+            host,
+            &server,
+            Some(&BridgeRuntime {
+                executable: "/Applications/Skills Hub.app/Contents/MacOS/skills-hub".into(),
+                database_path: "/Users/example/Library/Application Support/skills-hub/skills.db"
+                    .into(),
+                http_port: None,
+            }),
+        )
+        .unwrap();
+        assert!(rendered.contains("--mcp-bridge"));
+        assert!(rendered.contains("--db"));
+        assert!(rendered.contains("skills.db"));
         assert!(!rendered.contains("GITHUB_TOKEN"));
     }
 }
@@ -28,13 +40,13 @@ fn json_merge_preserves_unmanaged_entries_and_rejects_unowned_collision() {
 
     assert!(crate::core::mcp_adapters::merge_json_host_config(
         existing,
-        &replacement,
+        replacement,
         "github",
         false
     )
     .is_err());
     let merged =
-        crate::core::mcp_adapters::merge_json_host_config(existing, &replacement, "github", true)
+        crate::core::mcp_adapters::merge_json_host_config(existing, replacement, "github", true)
             .unwrap();
     let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
     assert_eq!(value["theme"], "dark");
@@ -148,7 +160,17 @@ fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
         McpHost::Kiro,
         McpHost::Reasonix,
     ] {
-        let rendered = render_server(host, &server, Some(8765)).unwrap();
+        let rendered = render_server(
+            host,
+            &server,
+            Some(&BridgeRuntime {
+                executable: "/Applications/Skills Hub.app/Contents/MacOS/skills-hub".into(),
+                database_path: "/Users/example/Library/Application Support/skills-hub/skills.db"
+                    .into(),
+                http_port: Some(8765),
+            }),
+        )
+        .unwrap();
         assert!(rendered.contains("127.0.0.1:8765"));
         assert!(!rendered.contains("STRIPE_KEY"));
     }

@@ -36,6 +36,7 @@ import ScopeSyncModal from './components/skills/modals/ScopeSyncModal'
 import SharedDirModal from './components/skills/modals/SharedDirModal'
 import SettingsPage from './components/skills/SettingsPage'
 import ToolsPage from './components/skills/ToolsPage'
+import McpPage from './components/skills/McpPage'
 import UpdatesPage from './components/skills/UpdatesPage'
 import {
   getAutoUpdateToastKey,
@@ -65,6 +66,7 @@ import type {
   OnlineSkillDto,
   TagWithCountDto,
   ToolConfigDto,
+  McpServerDto,
   ToolOption,
   ToolStatusDto,
   UpdateResultDto,
@@ -79,7 +81,7 @@ type SkillScopeState = Record<
 >
 
 type ActiveView = 'myskills' | 'explore' | 'detail' | 'settings' | 'manage'
-type ManagementTab = 'tags' | 'tools' | 'updates'
+type ManagementTab = 'tags' | 'tools' | 'mcp' | 'updates'
 
 function App() {
   const { t, i18n } = useTranslation()
@@ -177,6 +179,8 @@ function App() {
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false)
   const [showBulkTagsModal, setShowBulkTagsModal] = useState(false)
   const [bulkSyncToolIds, setBulkSyncToolIds] = useState<string[]>([])
+  const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
+  const [mcpBusy, setMcpBusy] = useState(false)
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -359,13 +363,71 @@ function App() {
     }
   }, [invokeTauri])
 
+  const loadMcpServers = useCallback(async () => {
+    try {
+      setMcpServers(await invokeTauri<McpServerDto[]>('get_mcp_servers'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri])
+
+  const saveMcpServer = useCallback(async (server: McpServerDto): Promise<McpServerDto | null> => {
+    setMcpBusy(true)
+    try {
+      const saved = await invokeTauri<McpServerDto>('upsert_mcp_server', { server })
+      await loadMcpServers()
+      toast.success(t('mcp.saved'))
+      return saved
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+      return null
+    } finally {
+      setMcpBusy(false)
+    }
+  }, [invokeTauri, loadMcpServers, t])
+
+  const setMcpSecret = useCallback(async (serverId: string, envVar: string, value: string) => {
+    try {
+      await invokeTauri('set_mcp_secret', { serverId, envVar, value })
+      await loadMcpServers()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, loadMcpServers])
+
+  const deleteMcpServer = useCallback(async (serverId: string) => {
+    setMcpBusy(true)
+    try {
+      await invokeTauri('delete_mcp_server', { serverId })
+      await loadMcpServers()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMcpBusy(false)
+    }
+  }, [invokeTauri, loadMcpServers])
+
+  const syncMcpServer = useCallback(async (serverId: string, tools: string[]) => {
+    setMcpBusy(true)
+    try {
+      await invokeTauri('sync_mcp_server', { serverId, tools })
+      await loadMcpServers()
+      toast.success(t('mcp.synced'))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMcpBusy(false)
+    }
+  }, [invokeTauri, loadMcpServers, t])
+
   useEffect(() => {
     if (isTauri) {
       loadManagedSkills()
       loadTags()
       loadCollections()
+      loadMcpServers()
     }
-  }, [isTauri, loadManagedSkills, loadTags, loadCollections])
+  }, [isTauri, loadManagedSkills, loadTags, loadCollections, loadMcpServers])
 
   // Refresh the collections list whenever the underlying skills change (install,
   // delete, assign, rename, etc). This keeps the series landing counts in sync
@@ -3619,6 +3681,15 @@ function App() {
                   {t('manageTabs.tools')}
                 </button>
                 <button
+                  className={`management-tab${managementTab === 'mcp' ? ' active' : ''}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={managementTab === 'mcp'}
+                  onClick={() => setManagementTab('mcp')}
+                >
+                  {t('manageTabs.mcp')}
+                </button>
+                <button
                   className={`management-tab${managementTab === 'updates' ? ' active' : ''}`}
                   type="button"
                   role="tab"
@@ -3650,6 +3721,16 @@ function App() {
                   toolStatus={toolStatus}
                   toolConfig={toolConfig}
                   onToolConfigChange={handleToolConfigChange}
+                  t={t}
+                />
+              ) : managementTab === 'mcp' ? (
+                <McpPage
+                  servers={mcpServers}
+                  busy={mcpBusy}
+                  onSave={saveMcpServer}
+                  onSetSecret={setMcpSecret}
+                  onDelete={deleteMcpServer}
+                  onSync={syncMcpServer}
                   t={t}
                 />
               ) : (

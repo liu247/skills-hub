@@ -18,6 +18,13 @@ pub struct McpSyncOutcome {
     pub backup_path: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug)]
+pub struct BridgeRuntime {
+    pub executable: PathBuf,
+    pub database_path: PathBuf,
+    pub http_port: Option<u16>,
+}
+
 pub fn global_config_path(host: McpHost) -> Result<PathBuf> {
     let home = dirs::home_dir().context("resolve user home directory for MCP configuration")?;
     Ok(match host {
@@ -31,12 +38,12 @@ pub fn global_config_path(host: McpHost) -> Result<PathBuf> {
 pub fn render_server(
     host: McpHost,
     server: &McpServerRecord,
-    proxy_port: Option<u16>,
+    bridge: Option<&BridgeRuntime>,
 ) -> Result<String> {
     let requires_bridge = !server.env.is_empty() || !server.headers.is_empty();
     let value = match server.transport.as_str() {
-        "stdio" => render_stdio(server, requires_bridge)?,
-        "http" => render_http(server, requires_bridge, proxy_port)?,
+        "stdio" => render_stdio(server, requires_bridge, bridge)?,
+        "http" => render_http(server, requires_bridge, bridge)?,
         _ => anyhow::bail!("unsupported MCP transport {}", server.transport),
     };
     match host {
@@ -89,14 +96,14 @@ pub fn sync_host_file(
     server: &McpServerRecord,
     path: &Path,
     owns_existing_entry: bool,
-    proxy_port: Option<u16>,
+    bridge: Option<&BridgeRuntime>,
 ) -> Result<McpSyncOutcome> {
     let existing = if path.exists() {
         std::fs::read_to_string(path).context("read existing MCP configuration")?
     } else {
         String::new()
     };
-    let rendered = render_server(host, server, proxy_port)?;
+    let rendered = render_server(host, server, bridge)?;
     let next = match host {
         McpHost::ClaudeCode | McpHost::Kiro => {
             merge_json_host_config(&existing, &rendered, &server.name, owns_existing_entry)?
@@ -214,21 +221,29 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn render_stdio(server: &McpServerRecord, requires_bridge: bool) -> Result<Value> {
+fn render_stdio(
+    server: &McpServerRecord,
+    requires_bridge: bool,
+    bridge: Option<&BridgeRuntime>,
+) -> Result<Value> {
     let command = server
         .command
         .as_deref()
         .context("stdio server command is required")?;
     if requires_bridge {
+        let bridge = bridge.context("credential bridge runtime is required")?;
         let mut args = vec![
+            "--mcp-bridge".to_string(),
             "stdio".to_string(),
+            "--db".to_string(),
+            bridge.database_path.to_string_lossy().to_string(),
             "--server-id".to_string(),
             server.id.clone(),
             "--".to_string(),
             command.to_string(),
         ];
         args.extend(server.args.clone());
-        return Ok(json!({ "command": "skills-hub-mcp-bridge", "args": args }));
+        return Ok(json!({ "command": bridge.executable, "args": args }));
     }
     Ok(json!({ "command": command, "args": server.args }))
 }
@@ -236,14 +251,16 @@ fn render_stdio(server: &McpServerRecord, requires_bridge: bool) -> Result<Value
 fn render_http(
     server: &McpServerRecord,
     requires_bridge: bool,
-    proxy_port: Option<u16>,
+    bridge: Option<&BridgeRuntime>,
 ) -> Result<Value> {
     let url = server
         .url
         .as_deref()
         .context("HTTP server URL is required")?;
     if requires_bridge {
-        let port = proxy_port.context("credential bridge port is required")?;
+        let port = bridge
+            .and_then(|runtime| runtime.http_port)
+            .context("credential bridge port is required")?;
         return Ok(json!({ "url": format!("http://127.0.0.1:{port}/mcp") }));
     }
     Ok(json!({ "url": url }))
@@ -259,7 +276,7 @@ fn render_codex(server: &McpServerRecord, value: &Value) -> Result<String> {
     for (key, value) in object {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
-            Value::Array(values) => toml_edit::value(toml_array(&values)),
+            Value::Array(values) => toml_edit::value(toml_array(values)),
             _ => anyhow::bail!("unsupported Codex field {key}"),
         };
     }
@@ -280,7 +297,7 @@ fn render_reasonix(server: &McpServerRecord, value: &Value) -> Result<String> {
     for (key, value) in object {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
-            Value::Array(values) => toml_edit::value(toml_array(&values)),
+            Value::Array(values) => toml_edit::value(toml_array(values)),
             _ => anyhow::bail!("unsupported Reasonix field {key}"),
         };
     }

@@ -257,7 +257,6 @@ impl SkillStore {
         Self { db_path }
     }
 
-    #[allow(dead_code)]
     pub fn db_path(&self) -> &Path {
         &self.db_path
     }

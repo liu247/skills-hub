@@ -120,6 +120,34 @@ export type ToolConfigDto = {
   custom_tools: CustomToolConfigDto[]
 }
 
+export type McpSecretStatusDto = {
+  env_var: string
+  has_value: boolean
+}
+
+export type McpTargetDto = {
+  tool: string
+  status: string
+  last_error?: string | null
+  synced_at?: number | null
+}
+
+export type McpServerDto = {
+  id: string
+  name: string
+  transport: 'stdio' | 'http' | string
+  command?: string | null
+  args: string[]
+  env: Record<string, string>
+  cwd?: string | null
+  url?: string | null
+  headers: Record<string, string>
+  enabled: boolean
+  proxy_enabled: boolean
+  secret_refs: McpSecretStatusDto[]
+  targets: McpTargetDto[]
+}
+
 export type UpdateResultDto = {
   skill_id: string
   name: string

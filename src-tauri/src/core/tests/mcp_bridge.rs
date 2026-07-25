@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::core::credential_store::{CredentialStore, MemoryCredentialStore};
-use crate::core::mcp_bridge::resolve_bridge_environment;
+use crate::core::mcp_bridge::{resolve_bridge_environment, resolve_bridge_values};
 
 #[test]
 fn bridge_resolves_references_without_returning_the_reference_literal() {
@@ -32,4 +32,18 @@ fn bridge_rejects_missing_credential() {
     .to_string();
 
     assert!(error.contains("missing credential reference GITHUB_TOKEN"));
+}
+
+#[test]
+fn bridge_resolves_header_reference_by_credential_name() {
+    let store = MemoryCredentialStore::default();
+    store.set("remote", "API_TOKEN", "secret-value").unwrap();
+    let values = resolve_bridge_values(
+        &store,
+        "remote",
+        &BTreeMap::from([("Authorization".into(), "${API_TOKEN}".into())]),
+    )
+    .unwrap();
+
+    assert_eq!(values["Authorization"], "secret-value");
 }

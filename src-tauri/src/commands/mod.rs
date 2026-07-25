@@ -29,7 +29,7 @@ use crate::core::installer::{
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
-use crate::core::mcp_adapters::{global_config_path, sync_host_file, McpHost};
+use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
 use crate::core::network_proxy::{
     get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -430,6 +430,7 @@ pub async fn upsert_mcp_server(
             args: server.args.clone(),
             env: server.env.clone(),
             url: server.url.clone(),
+            headers: server.headers.clone(),
         };
         validate_mcp_server_input(&input)?;
         let now = now_ms();
@@ -513,11 +514,40 @@ pub async fn sync_mcp_server(
             .into_iter()
             .find(|record| record.id == server_id)
             .context("MCP server not found")?;
-        if (!server.env.is_empty() || !server.headers.is_empty()) && server.proxy_enabled {
-            anyhow::bail!("credential bridge runtime is not available yet");
-        }
         if (!server.env.is_empty() || !server.headers.is_empty()) && !server.proxy_enabled {
             anyhow::bail!("credential proxy is disabled for this MCP server");
+        }
+        let requires_bridge = !server.env.is_empty() || !server.headers.is_empty();
+        let bridge = requires_bridge
+            .then(|| {
+                Ok::<_, anyhow::Error>(BridgeRuntime {
+                    executable: std::env::current_exe().context("resolve Skills Hub executable")?,
+                    database_path: store.db_path().to_path_buf(),
+                    http_port: (server.transport == "http")
+                        .then(find_free_loopback_port)
+                        .transpose()?,
+                })
+            })
+            .transpose()?;
+        if let Some(bridge) = &bridge {
+            if let Some(port) = bridge.http_port {
+                std::process::Command::new(&bridge.executable)
+                    .args([
+                        "--mcp-bridge",
+                        "http",
+                        "--db",
+                        &bridge.database_path.to_string_lossy(),
+                        "--server-id",
+                        &server.id,
+                        "--port",
+                        &port.to_string(),
+                    ])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .context("start loopback MCP credential bridge")?;
+            }
         }
         let existing = store.list_mcp_targets(&server.id)?;
         let mut results = Vec::new();
@@ -531,7 +561,7 @@ pub async fn sync_mcp_server(
             };
             let owns = existing.iter().any(|target| target.tool == tool);
             let path = global_config_path(host)?;
-            match sync_host_file(host, &server, &path, owns, None) {
+            match sync_host_file(host, &server, &path, owns, bridge.as_ref()) {
                 Ok(_) => {
                     let target = McpServerTargetRecord {
                         id: Uuid::new_v4().to_string(),
@@ -562,6 +592,12 @@ pub async fn sync_mcp_server(
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+fn find_free_loopback_port() -> anyhow::Result<u16> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .context("reserve loopback MCP bridge port")?;
+    Ok(listener.local_addr()?.port())
 }
 
 #[tauri::command]

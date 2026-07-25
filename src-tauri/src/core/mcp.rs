@@ -10,6 +10,7 @@ pub struct McpServerInput {
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub url: Option<String>,
+    pub headers: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +33,7 @@ impl McpServerInput {
             args,
             env,
             url: None,
+            headers: BTreeMap::new(),
         }
     }
 }
@@ -72,5 +74,19 @@ pub fn validate_mcp_server_input(input: &McpServerInput) -> Result<()> {
             anyhow::bail!("MCP environment values must be references in the form ${{NAME}}");
         }
     }
+    for (header, value) in &input.headers {
+        if header.trim().is_empty() || credential_name_from_reference(value).is_none() {
+            anyhow::bail!("MCP HTTP headers must use credential references in the form ${{NAME}}");
+        }
+    }
     Ok(())
+}
+
+pub fn credential_name_from_reference(value: &str) -> Option<&str> {
+    let name = value.strip_prefix("${")?.strip_suffix('}')?;
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'))
+    .then_some(name)
 }
