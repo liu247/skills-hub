@@ -136,12 +136,6 @@ const Header = ({
         >
           <ChevronLeft size={collapsed ? 13 : 16} />
         </button>
-        <button className={activeView === 'mcp' ? 'active' : ''} type="button" onClick={() => onViewChange('mcp')} title={collapsed ? t('manageTabs.mcp') : undefined}>
-          <Server size={18} /><span>{t('manageTabs.mcp')}</span>
-        </button>
-        <button className={activeView === 'mcp-add' ? 'active' : ''} type="button" onClick={() => onViewChange('mcp-add')} title={collapsed ? t('mcpImport.title') : undefined}>
-          <ServerCog size={18} /><span>{t('mcpImport.title')}</span>
-        </button>
       </div>
 
       <div className="sidebar-section-label">{t('workspace')}</div>
@@ -164,6 +158,24 @@ const Header = ({
         >
           <Compass size={18} />
           <span>{t('addSkills')}</span>
+        </button>
+        <button
+          className={activeView === 'mcp' ? 'active' : ''}
+          type="button"
+          onClick={() => onViewChange('mcp')}
+          title={collapsed ? t('manageTabs.mcp') : undefined}
+        >
+          <Server size={18} />
+          <span>{t('manageTabs.mcp')}</span>
+        </button>
+        <button
+          className={activeView === 'mcp-add' ? 'active' : ''}
+          type="button"
+          onClick={() => onViewChange('mcp-add')}
+          title={collapsed ? t('mcpImport.title') : undefined}
+        >
+          <ServerCog size={18} />
+          <span>{t('mcpImport.title')}</span>
         </button>
       </nav>
 

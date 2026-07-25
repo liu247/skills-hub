@@ -14,6 +14,7 @@ const t = ((key: string) => {
     'manageTabs.tags': 'Tags',
     'manageTabs.tools': 'Tools',
     'manageTabs.mcp': 'MCP',
+    'mcpImport.title': 'Add MCP',
     'manageTabs.updates': 'Updates',
     settings: 'Settings',
     'sidebar.collapse': 'Collapse sidebar',
@@ -23,7 +24,7 @@ const t = ((key: string) => {
 }) as unknown as TFunction
 
 describe('Header', () => {
-  it('exposes MCP in the management navigation', () => {
+  it('places MCP navigation alongside the workspace actions', () => {
     const markup = renderToStaticMarkup(
       <Header
         activeView="mcp"
@@ -47,6 +48,8 @@ describe('Header', () => {
       />,
     )
 
-    expect(markup).toContain('>MCP</span>')
+    expect(markup).toMatch(
+      /<nav class="sidebar-nav" aria-label="Workspace">[\s\S]*?<span>My Skills<\/span>[\s\S]*?<span>Add Skills<\/span>[\s\S]*?<span>MCP<\/span>[\s\S]*?<span>Add MCP<\/span>[\s\S]*?<\/nav>/,
+    )
   })
 })
