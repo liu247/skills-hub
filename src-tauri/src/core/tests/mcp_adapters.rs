@@ -43,6 +43,28 @@ fn json_merge_preserves_unmanaged_entries_and_rejects_unowned_collision() {
 }
 
 #[test]
+fn codex_toml_merge_preserves_comments_and_rejects_unowned_collision() {
+    let existing = "# keep this comment\nmodel = \"gpt\"\n[mcp_servers.other]\ncommand = \"other\"\n[mcp_servers.github]\ncommand = \"old\"\n";
+    let replacement = "[mcp_servers.github]\ncommand = \"new\"\n";
+
+    assert!(crate::core::mcp_adapters::merge_codex_toml_config(
+        existing,
+        replacement,
+        "github",
+        false
+    )
+    .is_err());
+    let merged =
+        crate::core::mcp_adapters::merge_codex_toml_config(existing, replacement, "github", true)
+            .unwrap();
+    assert!(merged.contains("# keep this comment"));
+    assert!(merged.contains("[mcp_servers.other]"));
+    assert!(merged.contains("command = \"other\""));
+    assert!(merged.contains("[mcp_servers.github]"));
+    assert!(merged.contains("command = \"new\""));
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();

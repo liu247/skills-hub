@@ -67,6 +67,34 @@ pub fn merge_json_host_config(
     Ok(serde_json::to_string_pretty(&document)?)
 }
 
+pub fn merge_codex_toml_config(
+    existing: &str,
+    rendered: &str,
+    server_name: &str,
+    owns_existing_entry: bool,
+) -> Result<String> {
+    let mut document = existing
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse existing Codex TOML configuration")?;
+    let replacement = rendered
+        .parse::<toml_edit::DocumentMut>()
+        .context("parse rendered Codex TOML configuration")?;
+    let replacement_entry = replacement["mcp_servers"][server_name]
+        .as_table()
+        .context("rendered Codex configuration is missing server table")?
+        .clone();
+
+    let root = document["mcp_servers"].or_insert(toml_edit::table());
+    let servers = root
+        .as_table_mut()
+        .context("mcp_servers must be a TOML table")?;
+    if servers.contains_key(server_name) && !owns_existing_entry {
+        anyhow::bail!("MCP server name is already used by an unmanaged host entry");
+    }
+    servers.insert(server_name, toml_edit::Item::Table(replacement_entry));
+    Ok(document.to_string())
+}
+
 fn render_stdio(server: &McpServerRecord, requires_bridge: bool) -> Result<Value> {
     let command = server
         .command
