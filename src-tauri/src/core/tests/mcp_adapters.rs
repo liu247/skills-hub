@@ -21,6 +21,28 @@ fn secret_bearing_stdio_renders_bridge_for_all_hosts() {
 }
 
 #[test]
+fn json_merge_preserves_unmanaged_entries_and_rejects_unowned_collision() {
+    let existing =
+        r#"{"theme":"dark","mcpServers":{"other":{"command":"other"},"github":{"command":"old"}}}"#;
+    let replacement = r#"{"mcpServers":{"github":{"command":"new"}}}"#;
+
+    assert!(crate::core::mcp_adapters::merge_json_host_config(
+        existing,
+        &replacement,
+        "github",
+        false
+    )
+    .is_err());
+    let merged =
+        crate::core::mcp_adapters::merge_json_host_config(existing, &replacement, "github", true)
+            .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
+    assert_eq!(value["theme"], "dark");
+    assert_eq!(value["mcpServers"]["other"]["command"], "other");
+    assert_eq!(value["mcpServers"]["github"]["command"], "new");
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();

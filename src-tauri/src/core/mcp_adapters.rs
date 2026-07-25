@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{json, Map, Value};
 
 use super::skill_store::McpServerRecord;
@@ -29,6 +29,42 @@ pub fn render_server(
             "mcpServers": { server.name.clone(): value }
         }))?),
     }
+}
+
+pub fn merge_json_host_config(
+    existing: &str,
+    rendered: &str,
+    server_name: &str,
+    owns_existing_entry: bool,
+) -> Result<String> {
+    let mut document = if existing.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::from_str::<Value>(existing).context("parse existing MCP JSON configuration")?
+    };
+    let replacement =
+        serde_json::from_str::<Value>(rendered).context("parse rendered MCP JSON configuration")?;
+    let root = document
+        .as_object_mut()
+        .context("MCP JSON configuration must be an object")?;
+    let replacement_servers = replacement
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .context("rendered MCP JSON must contain mcpServers")?;
+    let replacement_entry = replacement_servers
+        .get(server_name)
+        .context("rendered MCP JSON is missing server entry")?
+        .clone();
+    let servers = root
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .context("mcpServers must be an object")?;
+    if servers.contains_key(server_name) && !owns_existing_entry {
+        anyhow::bail!("MCP server name is already used by an unmanaged host entry");
+    }
+    servers.insert(server_name.to_string(), replacement_entry);
+    Ok(serde_json::to_string_pretty(&document)?)
 }
 
 fn render_stdio(server: &McpServerRecord, requires_bridge: bool) -> Result<Value> {
@@ -76,7 +112,7 @@ fn render_codex(server: &McpServerRecord, value: &Value) -> Result<String> {
     for (key, value) in object {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
-            Value::Array(values) => toml_edit::value(toml_array(values)),
+            Value::Array(values) => toml_edit::value(toml_array(&values)),
             _ => anyhow::bail!("unsupported Codex field {key}"),
         };
     }
@@ -97,7 +133,7 @@ fn render_reasonix(server: &McpServerRecord, value: &Value) -> Result<String> {
     for (key, value) in object {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
-            Value::Array(values) => toml_edit::value(toml_array(values)),
+            Value::Array(values) => toml_edit::value(toml_array(&values)),
             _ => anyhow::bail!("unsupported Reasonix field {key}"),
         };
     }
@@ -111,14 +147,4 @@ fn toml_array(values: &[Value]) -> toml_edit::Array {
         array.push(value);
     }
     array
-}
-
-trait ContextExt<T> {
-    fn context(self, message: &str) -> Result<T>;
-}
-
-impl<T> ContextExt<T> for Option<T> {
-    fn context(self, message: &str) -> Result<T> {
-        self.ok_or_else(|| anyhow::anyhow!(message.to_string()))
-    }
 }
