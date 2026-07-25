@@ -54,6 +54,37 @@ use uuid::Uuid;
 
 const RECENT_PROJECTS_SETTING: &str = "recent_projects_v1";
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSecretStatusDto {
+    pub env_var: String,
+    pub has_value: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpTargetDto {
+    pub tool: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub synced_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerDto {
+    pub id: String,
+    pub name: String,
+    pub transport: String,
+    pub command: Option<String>,
+    pub args: Vec<String>,
+    pub env: std::collections::BTreeMap<String, String>,
+    pub cwd: Option<String>,
+    pub url: Option<String>,
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub enabled: bool,
+    pub proxy_enabled: bool,
+    pub secret_refs: Vec<McpSecretStatusDto>,
+    pub targets: Vec<McpTargetDto>,
+}
+
 fn format_anyhow_error(err: anyhow::Error) -> String {
     let first = err.to_string();
     // Frontend relies on these prefixes for special flows.

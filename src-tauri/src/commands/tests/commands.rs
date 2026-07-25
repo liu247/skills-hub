@@ -1,6 +1,34 @@
 use super::*;
 use crate::core::skill_store::SkillRecord;
 
+#[test]
+fn mcp_dto_never_serializes_secret_values() {
+    let dto = McpServerDto {
+        id: "server-1".to_string(),
+        name: "github".to_string(),
+        transport: "stdio".to_string(),
+        command: Some("npx".to_string()),
+        args: vec!["-y".to_string()],
+        env: std::collections::BTreeMap::from([(
+            "GITHUB_TOKEN".to_string(),
+            "${GITHUB_TOKEN}".to_string(),
+        )]),
+        cwd: None,
+        url: None,
+        headers: std::collections::BTreeMap::new(),
+        enabled: true,
+        proxy_enabled: true,
+        secret_refs: vec![McpSecretStatusDto {
+            env_var: "GITHUB_TOKEN".to_string(),
+            has_value: true,
+        }],
+        targets: Vec::new(),
+    };
+    let encoded = serde_json::to_string(&dto).unwrap();
+    assert!(encoded.contains("GITHUB_TOKEN"));
+    assert!(!encoded.contains("secret-value"));
+}
+
 fn make_store() -> (tempfile::TempDir, SkillStore) {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = SkillStore::new(dir.path().join("test.db"));
