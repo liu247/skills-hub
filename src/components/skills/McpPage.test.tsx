@@ -18,6 +18,7 @@ const t = ((key: string, options?: Record<string, unknown>) => ({
   'mcp.allSources': 'All sources',
   'mcp.sortUpdated': 'Recently updated',
   'mcp.batchSync': 'Sync all sources',
+  'mcp.scanLocal': 'Scan local MCP',
   'mcp.gridView': 'Grid view',
   'mcp.listView': 'List view',
   'mcp.back': 'All sources',
@@ -51,6 +52,7 @@ describe('McpPage', () => {
         onSetSecret={async () => undefined}
         onDelete={async () => undefined}
         onSync={async () => undefined}
+        onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
         t={t}
@@ -73,6 +75,7 @@ describe('McpPage', () => {
         onSetSecret={async () => undefined}
         onDelete={async () => undefined}
         onSync={async () => undefined}
+        onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
         t={t}

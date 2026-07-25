@@ -169,6 +169,31 @@ export type McpImportCandidateDto = {
   source_url: string
 }
 
+export type LocalMcpVariantDto = {
+  host: string
+  path: string
+  name: string
+  transport: string
+  command?: string | null
+  args: string[]
+  url?: string | null
+  env: Record<string, string>
+  headers: Record<string, string>
+  credential_names: string[]
+}
+
+export type LocalMcpGroupDto = {
+  name: string
+  variants: LocalMcpVariantDto[]
+  has_conflict: boolean
+}
+
+export type LocalMcpPlanDto = {
+  total_hosts_scanned: number
+  total_servers_found: number
+  groups: LocalMcpGroupDto[]
+}
+
 export type UpdateResultDto = {
   skill_id: string
   name: string

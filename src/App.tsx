@@ -38,6 +38,7 @@ import SettingsPage from './components/skills/SettingsPage'
 import ToolsPage from './components/skills/ToolsPage'
 import McpPage from './components/skills/McpPage'
 import McpImportPage from './components/skills/McpImportPage'
+import McpDiscoveryModal from './components/skills/modals/McpDiscoveryModal'
 import UpdatesPage from './components/skills/UpdatesPage'
 import WindowResizeHandles from './components/WindowResizeHandles'
 import {
@@ -71,6 +72,7 @@ import type {
   ManagedSkill,
   McpServerDto,
   McpImportCandidateDto,
+  LocalMcpPlanDto,
   OnboardingPlan,
   OnlineSkillDto,
   TagWithCountDto,
@@ -214,6 +216,7 @@ function App() {
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
+  const [localMcpPlan, setLocalMcpPlan] = useState<LocalMcpPlanDto | null>(null)
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -492,6 +495,15 @@ function App() {
     catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
     finally { setMcpBusy(false) }
   }, [invokeTauri])
+
+  const scanLocalMcpConfigs = useCallback(async () => {
+    setMcpBusy(true)
+    try {
+      setLocalMcpPlan(await invokeTauri<LocalMcpPlanDto>('scan_local_mcp_configs'))
+    }
+    catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
+    finally { setMcpBusy(false) }
+  }, [invokeTauri, t])
 
   const importMcpCandidates = useCallback(async (candidates: McpImportCandidateDto[]) => {
     setMcpBusy(true)
@@ -3728,6 +3740,7 @@ function App() {
             onSetSecret={setMcpSecret}
             onDelete={deleteMcpServer}
             onSync={syncMcpServer}
+            onScanLocal={() => void scanLocalMcpConfigs()}
             onOpenImport={() => setActiveView('mcp-add')}
             onCloseManualEditor={() => setActiveView('mcp')}
             t={t}
@@ -3946,6 +3959,14 @@ function App() {
         onConfirm={handleSharedConfirm}
         t={t}
       />
+
+      {localMcpPlan ? <McpDiscoveryModal open plan={localMcpPlan} loading={mcpBusy} onClose={() => setLocalMcpPlan(null)} onImport={(selected) => {
+        const candidates = localMcpPlan.groups.flatMap((group) => {
+          const variant = group.variants[selected[group.name]]
+          return variant ? [{ name: variant.name, transport: variant.transport, command: variant.command ?? '', args: variant.args, env: variant.env, url: variant.url ?? '', headers: variant.headers, source_url: `local://${variant.host}`, source_path: variant.path }] : []
+        })
+        setLocalMcpPlan(null); void importMcpCandidates(candidates)
+      }} t={t} /> : null}
 
       <ScopeSyncModal
         key={

@@ -12,6 +12,7 @@ type McpPageProps = {
   onSetSecret: (serverId: string, envVar: string, value: string) => Promise<void>
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
+  onScanLocal: () => void
   onOpenImport: () => void
   onCloseManualEditor: () => void
   t: TFunction
@@ -24,7 +25,7 @@ const emptyServer = (): McpServerDto => ({
   url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
-const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
   const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
   const [headerName, setHeaderName] = useState('Authorization')
@@ -90,6 +91,7 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
       <button className="btn btn-secondary sort-btn" type="button"><span>{sourceFilter === 'all' ? t('mcp.allSources') : sourceLabel(sourceFilter)}</span><select aria-label={t('mcp.sourceFilter')} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">{t('mcp.allSources')}</option>{collections.map((collection) => <option value={collection.key} key={collection.key}>{sourceLabel(collection.key)}</option>)}</select></button>
       <button className="btn btn-secondary sort-btn" type="button"><ArrowUpDown size={14}/><span>{sortBy === 'updated' ? t('mcp.sortUpdated') : t('mcp.sortName')}</span><select aria-label={t('mcp.sort')} value={sortBy} onChange={(event) => setSortBy(event.target.value as 'updated' | 'name')}><option value="updated">{t('mcp.sortUpdated')}</option><option value="name">{t('mcp.sortName')}</option></select></button>
       <button type="button" className="btn btn-secondary" disabled={busy || !servers.length} onClick={() => void Promise.all(servers.map((server) => onSync(server.id, targets)))}><RefreshCw size={15}/>{t('mcp.batchSync')}</button>
+      <button type="button" className="btn btn-secondary" disabled={busy} onClick={onScanLocal}><Search size={15}/>{t('mcp.scanLocal')}</button>
       <div className="view-mode-toggle" role="group" aria-label={t('mcp.viewMode')}><button className={viewMode === 'cards' ? 'active' : ''} type="button" onClick={() => setViewMode('cards')} aria-label={t('mcp.gridView')}><Grid2X2 size={15}/></button><button className={viewMode === 'list' ? 'active' : ''} type="button" onClick={() => setViewMode('list')} aria-label={t('mcp.listView')}><List size={15}/></button></div>
       <button type="button" className="btn btn-primary mcp-add-button" onClick={onOpenImport}><Plus size={16}/>{t('mcp.add')}</button>
     </div>
