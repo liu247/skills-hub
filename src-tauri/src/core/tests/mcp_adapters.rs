@@ -78,6 +78,23 @@ fn atomic_write_keeps_backup_and_replaces_target() {
 }
 
 #[test]
+fn sync_json_host_file_merges_and_creates_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.json");
+    std::fs::write(&path, r#"{"mcpServers":{"other":{"command":"other"}}}"#).unwrap();
+    let server = McpServerRecord::stdio("github-id", "github", "npx", vec!["-y".into()]);
+
+    let outcome =
+        crate::core::mcp_adapters::sync_host_file(McpHost::ClaudeCode, &server, &path, false, None)
+            .unwrap();
+    assert!(outcome.backup_path.is_some());
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(value["mcpServers"]["other"]["command"], "other");
+    assert_eq!(value["mcpServers"]["github"]["command"], "npx");
+}
+
+#[test]
 fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     let mut server = McpServerRecord::stdio("stripe-id", "stripe", "unused", vec![]);
     server.transport = "http".into();

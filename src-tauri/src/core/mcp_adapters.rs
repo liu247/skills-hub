@@ -13,6 +13,11 @@ pub enum McpHost {
     Reasonix,
 }
 
+#[derive(Clone, Debug)]
+pub struct McpSyncOutcome {
+    pub backup_path: Option<PathBuf>,
+}
+
 pub fn render_server(
     host: McpHost,
     server: &McpServerRecord,
@@ -67,6 +72,40 @@ pub fn merge_json_host_config(
     }
     servers.insert(server_name.to_string(), replacement_entry);
     Ok(serde_json::to_string_pretty(&document)?)
+}
+
+pub fn sync_host_file(
+    host: McpHost,
+    server: &McpServerRecord,
+    path: &Path,
+    owns_existing_entry: bool,
+    proxy_port: Option<u16>,
+) -> Result<McpSyncOutcome> {
+    let existing = if path.exists() {
+        std::fs::read_to_string(path).context("read existing MCP configuration")?
+    } else {
+        String::new()
+    };
+    let rendered = render_server(host, server, proxy_port)?;
+    let next = match host {
+        McpHost::ClaudeCode | McpHost::Kiro => {
+            merge_json_host_config(&existing, &rendered, &server.name, owns_existing_entry)?
+        }
+        McpHost::Codex => {
+            merge_codex_toml_config(&existing, &rendered, &server.name, owns_existing_entry)?
+        }
+        McpHost::Reasonix => {
+            if !existing.trim().is_empty() {
+                anyhow::bail!(
+                    "Reasonix TOML merge is not yet available for existing configuration"
+                );
+            }
+            rendered
+        }
+    };
+    Ok(McpSyncOutcome {
+        backup_path: write_config_atomically(path, &next)?,
+    })
 }
 
 pub fn merge_codex_toml_config(
