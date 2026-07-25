@@ -214,6 +214,7 @@ function App() {
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
+  const [mcpManualEditorOpen, setMcpManualEditorOpen] = useState(false)
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -3720,9 +3721,20 @@ function App() {
             ) : null}
           </div>
         ) : activeView === 'mcp' ? (
-          <McpPage servers={mcpServers} busy={mcpBusy} onSave={saveMcpServer} onSetSecret={setMcpSecret} onDelete={deleteMcpServer} onSync={syncMcpServer} t={t} />
+          <McpPage
+            servers={mcpServers}
+            busy={mcpBusy}
+            openManualEditor={mcpManualEditorOpen}
+            onSave={saveMcpServer}
+            onSetSecret={setMcpSecret}
+            onDelete={deleteMcpServer}
+            onSync={syncMcpServer}
+            onOpenImport={() => setActiveView('mcp-add')}
+            onManualEditorOpened={() => setMcpManualEditorOpen(false)}
+            t={t}
+          />
         ) : activeView === 'mcp-add' ? (
-          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp')} t={t} />
+          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => { setMcpManualEditorOpen(true); setActiveView('mcp') }} t={t} />
         ) : activeView === 'manage' ? (
           <div className="management-page">
             <div className="management-header">

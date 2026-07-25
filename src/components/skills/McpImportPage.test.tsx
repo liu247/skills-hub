@@ -19,6 +19,8 @@ describe('McpImportPage', () => {
     )
     expect(markup).toContain('Add MCP')
     expect(markup).toContain('Repository or config URL')
+    expect(markup).toContain('Scan configuration')
     expect(markup).toContain('Manual configuration')
+    expect(markup).toContain('mcp-import-toolbar')
   })
 })
