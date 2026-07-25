@@ -26,8 +26,8 @@ describe('Header', () => {
   it('exposes MCP in the management navigation', () => {
     const markup = renderToStaticMarkup(
       <Header
-        activeView="manage"
-        managementTab="mcp"
+        activeView="mcp"
+        managementTab="tags"
         skillCount={0}
         tagCount={0}
         toolCount={0}

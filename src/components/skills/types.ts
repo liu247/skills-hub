@@ -155,6 +155,17 @@ export type McpServerDto = {
   targets: McpTargetDto[]
 }
 
+export type McpImportCandidateDto = {
+  name: string
+  transport: 'stdio' | 'http' | string
+  command?: string | null
+  args: string[]
+  env: Record<string, string>
+  url?: string | null
+  headers: Record<string, string>
+  source_path: string
+}
+
 export type UpdateResultDto = {
   skill_id: string
   name: string

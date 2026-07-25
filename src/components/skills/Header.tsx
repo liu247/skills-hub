@@ -8,17 +8,17 @@ import {
   Layers3,
   LoaderCircle,
   RefreshCw,
-  Server,
+  Server, ServerCog,
   Settings,
   Tag,
   Wrench,
 } from 'lucide-react'
 import type { TFunction } from 'i18next'
 
-type ManagementTab = 'tags' | 'tools' | 'mcp' | 'updates'
+type ManagementTab = 'tags' | 'tools' | 'updates'
 
 type HeaderProps = {
-  activeView: 'myskills' | 'explore' | 'detail' | 'settings' | 'manage'
+  activeView: 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add'
   managementTab: ManagementTab
   skillCount: number
   tagCount: number
@@ -33,7 +33,7 @@ type HeaderProps = {
   onToggleCollapsed: () => void
   onOpenSettings: () => void
   onOpenUpdate: () => void
-  onViewChange: (view: 'myskills' | 'explore' | 'manage') => void
+  onViewChange: (view: 'myskills' | 'explore' | 'manage' | 'mcp' | 'mcp-add') => void
   onManagementTabChange: (tab: ManagementTab) => void
   t: TFunction
 }
@@ -136,6 +136,12 @@ const Header = ({
         >
           <ChevronLeft size={collapsed ? 13 : 16} />
         </button>
+        <button className={activeView === 'mcp' ? 'active' : ''} type="button" onClick={() => onViewChange('mcp')} title={collapsed ? t('manageTabs.mcp') : undefined}>
+          <Server size={18} /><span>{t('manageTabs.mcp')}</span>
+        </button>
+        <button className={activeView === 'mcp-add' ? 'active' : ''} type="button" onClick={() => onViewChange('mcp-add')} title={collapsed ? t('mcpImport.title') : undefined}>
+          <ServerCog size={18} /><span>{t('mcpImport.title')}</span>
+        </button>
       </div>
 
       <div className="sidebar-section-label">{t('workspace')}</div>
@@ -182,15 +188,6 @@ const Header = ({
           <Wrench size={18} />
           <span>{t('manageTabs.tools')}</span>
           <em>{toolCount}</em>
-        </button>
-        <button
-          className={activeView === 'manage' && managementTab === 'mcp' ? 'active' : ''}
-          type="button"
-          onClick={() => onManagementTabChange('mcp')}
-          title={collapsed ? t('manageTabs.mcp') : undefined}
-        >
-          <Server size={18} />
-          <span>{t('manageTabs.mcp')}</span>
         </button>
         <button
           className={activeView === 'manage' && managementTab === 'updates' ? 'active' : ''}

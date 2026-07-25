@@ -37,6 +37,7 @@ import SharedDirModal from './components/skills/modals/SharedDirModal'
 import SettingsPage from './components/skills/SettingsPage'
 import ToolsPage from './components/skills/ToolsPage'
 import McpPage from './components/skills/McpPage'
+import McpImportPage from './components/skills/McpImportPage'
 import UpdatesPage from './components/skills/UpdatesPage'
 import WindowResizeHandles from './components/WindowResizeHandles'
 import {
@@ -69,6 +70,7 @@ import type {
   LocalSkillCandidate,
   ManagedSkill,
   McpServerDto,
+  McpImportCandidateDto,
   OnboardingPlan,
   OnlineSkillDto,
   TagWithCountDto,
@@ -86,8 +88,8 @@ type SkillScopeState = Record<
   }
 >
 
-type ActiveView = 'myskills' | 'explore' | 'detail' | 'settings' | 'manage'
-type ManagementTab = 'tags' | 'tools' | 'mcp' | 'updates'
+type ActiveView = 'myskills' | 'explore' | 'detail' | 'settings' | 'manage' | 'mcp' | 'mcp-add'
+type ManagementTab = 'tags' | 'tools' | 'updates'
 type UpdaterProxyOptions = { proxy?: string }
 type UpdaterDownloadOptions = DownloadOptions & UpdaterProxyOptions
 
@@ -211,6 +213,7 @@ function App() {
   const [bulkSyncToolIds, setBulkSyncToolIds] = useState<string[]>([])
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
   const [mcpBusy, setMcpBusy] = useState(false)
+  const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -481,6 +484,25 @@ function App() {
     } finally {
       setMcpBusy(false)
     }
+  }, [invokeTauri, loadMcpServers, t])
+
+  const scanMcpGitSource = useCallback(async (repoUrl: string) => {
+    setMcpBusy(true)
+    try { setMcpCandidates(await invokeTauri<McpImportCandidateDto[]>('scan_mcp_git_source', { repoUrl })) }
+    catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
+    finally { setMcpBusy(false) }
+  }, [invokeTauri])
+
+  const importMcpCandidates = useCallback(async (candidates: McpImportCandidateDto[]) => {
+    setMcpBusy(true)
+    try {
+      for (const candidate of candidates) {
+        const saved = await invokeTauri<McpServerDto>('upsert_mcp_server', { server: { id: '', name: candidate.name, transport: candidate.transport, command: candidate.command ?? '', args: candidate.args, env: candidate.env, cwd: null, url: candidate.url ?? '', headers: candidate.headers, enabled: true, proxy_enabled: true, secret_refs: Object.keys(candidate.env).concat(Object.values(candidate.headers).map((value) => value.slice(2, -1))).filter((env_var, index, values) => env_var && values.indexOf(env_var) === index).map((env_var) => ({ env_var, has_value: false })), targets: [] } })
+        for (const reference of saved.secret_refs) { const value = window.prompt(t('mcp.secretPrompt', { name: reference.env_var })); if (value) await invokeTauri('set_mcp_secret', { serverId: saved.id, envVar: reference.env_var, value }) }
+      }
+      await loadMcpServers(); setMcpCandidates([]); setActiveView('mcp'); toast.success(t('mcp.saved'))
+    } catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
+    finally { setMcpBusy(false) }
   }, [invokeTauri, loadMcpServers, t])
 
   useEffect(() => {
@@ -1422,7 +1444,7 @@ function App() {
   }, [featuredSkills.length, invokeTauri])
 
   const handleViewChange = useCallback(
-    (view: 'myskills' | 'explore' | 'manage') => {
+    (view: 'myskills' | 'explore' | 'manage' | 'mcp' | 'mcp-add') => {
       setShowAddModal(false)
       setActiveView(view)
       if (view !== 'myskills') {
@@ -3697,6 +3719,10 @@ function App() {
               </div>
             ) : null}
           </div>
+        ) : activeView === 'mcp' ? (
+          <McpPage servers={mcpServers} busy={mcpBusy} onSave={saveMcpServer} onSetSecret={setMcpSecret} onDelete={deleteMcpServer} onSync={syncMcpServer} t={t} />
+        ) : activeView === 'mcp-add' ? (
+          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp')} t={t} />
         ) : activeView === 'manage' ? (
           <div className="management-page">
             <div className="management-header">
@@ -3722,15 +3748,6 @@ function App() {
                   onClick={() => setManagementTab('tools')}
                 >
                   {t('manageTabs.tools')}
-                </button>
-                <button
-                  className={`management-tab${managementTab === 'mcp' ? ' active' : ''}`}
-                  type="button"
-                  role="tab"
-                  aria-selected={managementTab === 'mcp'}
-                  onClick={() => setManagementTab('mcp')}
-                >
-                  {t('manageTabs.mcp')}
                 </button>
                 <button
                   className={`management-tab${managementTab === 'updates' ? ' active' : ''}`}
@@ -3764,16 +3781,6 @@ function App() {
                   toolStatus={toolStatus}
                   toolConfig={toolConfig}
                   onToolConfigChange={handleToolConfigChange}
-                  t={t}
-                />
-              ) : managementTab === 'mcp' ? (
-                <McpPage
-                  servers={mcpServers}
-                  busy={mcpBusy}
-                  onSave={saveMcpServer}
-                  onSetSecret={setMcpSecret}
-                  onDelete={deleteMcpServer}
-                  onSync={syncMcpServer}
                   t={t}
                 />
               ) : (
