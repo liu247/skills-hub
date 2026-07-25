@@ -24,9 +24,11 @@
 
 操作系统安全凭据库是唯一的真实密钥存储：macOS 使用 Keychain、Windows 使用 Credential Manager、Linux 使用 Secret Service。应用数据库只保存稳定的密钥引用（服务名与环境变量名），绝不保存密钥值或可逆加密副本；不提供主密码或可移植密钥库作为替代路径。
 
-一个 MCP Server 可关联多个命名密钥，例如 `GITHUB_TOKEN` 和 `STRIPE_KEY`。用户在 Skills Hub 中录入、更新或删除一次密钥后，所有已选宿主在下次同步时均从同一安全凭据库生成其所需的环境变量引用或认证字段，无需在各 App 重复输入。
+一个 MCP Server 可关联多个命名密钥，例如 `GITHUB_TOKEN` 和 `STRIPE_KEY`。用户在 Skills Hub 中录入、更新或删除一次密钥后，所有已选宿主均通过 Skills Hub 的凭据代理辅助功能读取同一安全凭据库，无需在各 App、Shell 或系统环境变量中重复输入。
 
-同步、备份、差异预览、SQLite 数据、日志、Tauri IPC DTO 和错误消息都不得包含明文密钥。若某宿主无法以环境变量或等效的安全引用表达所需认证，adapter 必须阻止该目标同步并给出明确的能力诊断，禁止降级为明文写入配置文件。
+凭据代理默认开启。对于 stdio Server，同步配置指向随 Skills Hub 安装的 launcher；launcher 按 Server ID 读取安全凭据库，在内存中注入子进程环境后启动真实命令。对于 HTTP Server，同步配置指向本机 loopback 代理 URL；代理按 Server ID 添加所需认证头后转发到远程 MCP 端点。凭据代理只监听 loopback、只在已配置的目标 Server 上工作，且不提供读取或导出密钥的 IPC/API。用户可以显式关闭代理；关闭后，带密钥引用的 Server 不可同步，避免退化为明文或依赖宿主环境变量。
+
+同步、备份、差异预览、SQLite 数据、日志、Tauri IPC DTO 和错误消息都不得包含明文密钥。若某宿主无法表达 launcher 或 loopback 代理所需的配置，adapter 必须阻止该目标同步并给出明确的能力诊断，禁止降级为明文写入配置文件。
 
 从现有宿主配置导入明文密钥并迁移到安全凭据库不属于第一阶段；后续实现时必须先写入凭据库、重新同步目标配置，并由用户明确确认是否移除原配置中的明文。
 
@@ -36,10 +38,10 @@
 
 | 宿主 | 全局路径 | 写入格式 | 约束 |
 | --- | --- | --- | --- |
-| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` | 使用 `toml_edit` 定点写入，保留注释与顺序；写入前备份；提示重启。 |
-| Claude Code | `~/.claude.json` | 顶层 `mcpServers.<name>` | 仅改 User scope；不触及 `projects`、`.mcp.json` 或插件；提示重启。 |
-| Kiro | `~/.kiro/settings/mcp.json` | `mcpServers.<name>` | 支持 stdio/HTTP；按需写入 Kiro 专属审批字段；Kiro 自动重载。 |
-| Reasonix | `~/.reasonix/config.toml` | `[[plugins]]` | 写入 `type=stdio` 或 `type=http`；不写 `.mcp.json`，避免与 `reasonix.toml` 的同名优先级冲突；提示重启/刷新。 |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` | 使用 `toml_edit` 定点写入，保留注释与顺序；stdio 指向 launcher，HTTP 指向 loopback 代理；写入前备份；提示重启。 |
+| Claude Code | `~/.claude.json` | 顶层 `mcpServers.<name>` | 仅改 User scope；stdio 指向 launcher，HTTP 指向 loopback 代理；不触及 `projects`、`.mcp.json` 或插件；提示重启。 |
+| Kiro | `~/.kiro/settings/mcp.json` | `mcpServers.<name>` | stdio 指向 launcher，HTTP 指向 loopback 代理；按需写入 Kiro 专属审批字段；Kiro 自动重载。 |
+| Reasonix | `~/.reasonix/config.toml` | `[[plugins]]` | stdio 指向 launcher，HTTP 指向 loopback 代理；不写 `.mcp.json`，避免与 `reasonix.toml` 的同名优先级冲突；提示重启/刷新。 |
 
 不支持的字段不会静默丢弃：同步前 adapter 返回能力诊断，UI 显示被忽略字段及原因，并允许用户取消。
 
@@ -63,6 +65,7 @@ Tauri command 层只负责 DTO 与错误转换。MCP 的 SQLite store、模型�
 ## 验证标准
 
 - 每个宿主能从同一 stdio 或 HTTP Server 定义生成正确的全局配置片段。
+- 带密钥引用的 stdio Server 只通过 launcher 启动，HTTP Server 只通过 loopback 代理访问；四个宿主配置不得直接引用或包含密钥值。
 - 不相关配置、注释（Codex）和未管理 MCP 条目保持不变。
 - 配置写入失败时原文件保持完整，目标状态记录错误。
 - 已管理 Server 的重复同步是幂等的。
