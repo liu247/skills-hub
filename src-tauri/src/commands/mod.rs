@@ -30,8 +30,10 @@ use crate::core::installer::{
 };
 use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
 use crate::core::mcp_adapters::{global_config_path, sync_host_file, BridgeRuntime, McpHost};
+use crate::core::mcp_discovery::{
+    scan_local_mcp_configs_with_secrets_in, without_managed_targets, LocalMcpPlan,
+};
 use crate::core::mcp_import::{scan_mcp_config_files, McpImportCandidate};
-use crate::core::mcp_discovery::{scan_local_mcp_configs_in, LocalMcpPlan};
 use crate::core::network_proxy::{
     app_http_client, get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -93,6 +95,12 @@ pub struct McpServerDto {
     pub source_path: Option<String>,
     pub secret_refs: Vec<McpSecretStatusDto>,
     pub targets: Vec<McpTargetDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LocalMcpImportSelection {
+    pub name: String,
+    pub host: String,
 }
 
 fn json_map_to_string_map(
@@ -454,14 +462,206 @@ pub async fn scan_mcp_git_source(
 }
 
 #[tauri::command]
-pub async fn scan_local_mcp_configs() -> Result<LocalMcpPlan, String> {
+pub async fn scan_local_mcp_configs(store: State<'_, SkillStore>) -> Result<LocalMcpPlan, String> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let home = dirs::home_dir().context("resolve user home directory for MCP scan")?;
-        scan_local_mcp_configs_in(&home)
+        let managed = managed_mcp_target_keys(&store)?;
+        Ok::<_, anyhow::Error>(
+            without_managed_targets(scan_local_mcp_configs_with_secrets_in(&home)?, &managed)
+                .plan(),
+        )
     })
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn import_local_mcp_selection(
+    store: State<'_, SkillStore>,
+    selections: Vec<LocalMcpImportSelection>,
+) -> Result<Vec<McpServerDto>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir().context("resolve user home directory for MCP import")?;
+        let discovery = without_managed_targets(
+            scan_local_mcp_configs_with_secrets_in(&home)?,
+            &managed_mcp_target_keys(&store)?,
+        );
+        let mut imported = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for selection in selections {
+            if !seen.insert((selection.name.clone(), selection.host.clone())) {
+                anyhow::bail!("duplicate local MCP selection");
+            }
+            let selected = discovery
+                .select(&selection.name, &selection.host)
+                .context("the selected local MCP service is no longer available")?;
+            let record = local_selection_record(&selected.variant);
+            let input = McpServerInput {
+                name: record.name.clone(),
+                transport: match record.transport.as_str() {
+                    "stdio" => McpTransport::Stdio,
+                    "http" => McpTransport::Http,
+                    _ => anyhow::bail!("unsupported MCP transport"),
+                },
+                command: record.command.clone(),
+                args: record.args.clone(),
+                env: json_map_to_string_map(&record.env)?,
+                url: record.url.clone(),
+                headers: json_map_to_string_map(&record.headers)?,
+            };
+            validate_mcp_server_input(&input)?;
+            store.upsert_mcp_server(&record)?;
+            let secret_names = record
+                .env
+                .keys()
+                .chain(record.headers.keys())
+                .cloned()
+                .collect::<Vec<_>>();
+            let refs = secret_names
+                .iter()
+                .map(|name| McpSecretRefRecord::new(&record.id, name))
+                .collect::<Vec<_>>();
+            if let Err(err) = (|| -> anyhow::Result<()> {
+                store.replace_mcp_secret_refs(&record.id, &refs)?;
+                for (name, value) in &selected.literal_credentials {
+                    OsCredentialStore.set(&record.id, name, value)?;
+                }
+                sync_local_selection(
+                    &store,
+                    &record,
+                    &selected.variant.host,
+                    &selected.variant.path,
+                )?;
+                Ok(())
+            })() {
+                for name in selected.literal_credentials.keys() {
+                    let _ = OsCredentialStore.delete(&record.id, name);
+                }
+                let _ = store.delete_mcp_server(&record.id);
+                return Err(err);
+            }
+            imported.push(to_mcp_dto(&store, record)?);
+        }
+        Ok::<_, anyhow::Error>(imported)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+fn managed_mcp_target_keys(
+    store: &SkillStore,
+) -> anyhow::Result<std::collections::HashSet<(String, String)>> {
+    let mut keys = std::collections::HashSet::new();
+    for server in store.list_mcp_servers()? {
+        for target in store.list_mcp_targets(&server.id)? {
+            keys.insert((target.tool, server.name.clone()));
+        }
+    }
+    Ok(keys)
+}
+
+fn local_selection_record(
+    variant: &crate::core::mcp_discovery::LocalMcpVariant,
+) -> McpServerRecord {
+    let now = now_ms();
+    McpServerRecord {
+        id: Uuid::new_v4().to_string(),
+        name: variant.name.clone(),
+        transport: variant.transport.clone(),
+        command: variant.command.clone(),
+        args: variant.args.clone(),
+        env: string_map_to_json_map(variant.env.clone()),
+        cwd: None,
+        url: variant.url.clone(),
+        headers: string_map_to_json_map(variant.headers.clone()),
+        enabled: true,
+        proxy_enabled: true,
+        source_url: Some(format!("local://{}", variant.host)),
+        source_path: Some(variant.path.clone()),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn sync_local_selection(
+    store: &SkillStore,
+    server: &McpServerRecord,
+    tool: &str,
+    path: &str,
+) -> anyhow::Result<()> {
+    let host = match tool {
+        "codex" => McpHost::Codex,
+        "claude_code" => McpHost::ClaudeCode,
+        "kiro" => McpHost::Kiro,
+        "reasonix" => McpHost::Reasonix,
+        _ => anyhow::bail!("unsupported MCP target {tool}"),
+    };
+    let bridge = bridge_runtime_for_server(store, server)?;
+    start_http_bridge(&bridge, server)?;
+    sync_host_file(
+        host,
+        server,
+        std::path::Path::new(path),
+        true,
+        bridge.as_ref(),
+    )?;
+    store.upsert_mcp_target(&McpServerTargetRecord {
+        id: Uuid::new_v4().to_string(),
+        mcp_server_id: server.id.clone(),
+        tool: tool.to_string(),
+        status: "ok".to_string(),
+        last_error: None,
+        synced_at: Some(now_ms()),
+    })?;
+    Ok(())
+}
+
+fn bridge_runtime_for_server(
+    store: &SkillStore,
+    server: &McpServerRecord,
+) -> anyhow::Result<Option<BridgeRuntime>> {
+    (!server.env.is_empty() || !server.headers.is_empty())
+        .then(|| {
+            Ok::<_, anyhow::Error>(BridgeRuntime {
+                executable: std::env::current_exe().context("resolve Skills Hub executable")?,
+                database_path: store.db_path().to_path_buf(),
+                http_port: (server.transport == "http")
+                    .then(find_free_loopback_port)
+                    .transpose()?,
+            })
+        })
+        .transpose()
+}
+
+fn start_http_bridge(
+    bridge: &Option<BridgeRuntime>,
+    server: &McpServerRecord,
+) -> anyhow::Result<()> {
+    if let Some(bridge) = bridge {
+        if let Some(port) = bridge.http_port {
+            std::process::Command::new(&bridge.executable)
+                .args([
+                    "--mcp-bridge",
+                    "http",
+                    "--db",
+                    &bridge.database_path.to_string_lossy(),
+                    "--server-id",
+                    &server.id,
+                    "--port",
+                    &port.to_string(),
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .context("start loopback MCP credential bridge")?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]

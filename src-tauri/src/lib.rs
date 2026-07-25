@@ -121,6 +121,7 @@ pub fn run() {
             commands::get_mcp_servers,
             commands::scan_mcp_git_source,
             commands::scan_local_mcp_configs,
+            commands::import_local_mcp_selection,
             commands::upsert_mcp_server,
             commands::set_mcp_secret,
             commands::delete_mcp_secret,

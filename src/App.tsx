@@ -503,7 +503,21 @@ function App() {
     }
     catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
     finally { setMcpBusy(false) }
-  }, [invokeTauri, t])
+  }, [invokeTauri])
+
+  const importLocalMcpSelections = useCallback(async (selections: { name: string; host: string }[]) => {
+    setMcpBusy(true)
+    try {
+      await invokeTauri<McpServerDto[]>('import_local_mcp_selection', { selections })
+      await loadMcpServers()
+      setLocalMcpPlan(null)
+      toast.success(t('mcp.saved'))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMcpBusy(false)
+    }
+  }, [invokeTauri, loadMcpServers, t])
 
   const importMcpCandidates = useCallback(async (candidates: McpImportCandidateDto[]) => {
     setMcpBusy(true)
@@ -3961,11 +3975,11 @@ function App() {
       />
 
       {localMcpPlan ? <McpDiscoveryModal open plan={localMcpPlan} loading={mcpBusy} onClose={() => setLocalMcpPlan(null)} onImport={(selected) => {
-        const candidates = localMcpPlan.groups.flatMap((group) => {
+        const selections = localMcpPlan.groups.flatMap((group) => {
           const variant = group.variants[selected[group.name]]
-          return variant ? [{ name: variant.name, transport: variant.transport, command: variant.command ?? '', args: variant.args, env: variant.env, url: variant.url ?? '', headers: variant.headers, source_url: `local://${variant.host}`, source_path: variant.path }] : []
+          return variant ? [{ name: variant.name, host: variant.host }] : []
         })
-        setLocalMcpPlan(null); void importMcpCandidates(candidates)
+        void importLocalMcpSelections(selections)
       }} t={t} /> : null}
 
       <ScopeSyncModal

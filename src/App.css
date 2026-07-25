@@ -2079,6 +2079,23 @@
   gap: 6px;
 }
 
+.mcp-credential-migration {
+  margin: -10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-soft-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mcp-discovered-credentials {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .modal-discovered .import-metrics {
   font-size: 12px;
   color: var(--text-tertiary);
