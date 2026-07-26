@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 
+use super::mcp::is_credential_name;
 use super::mcp_adapters::McpHost;
 
 #[derive(Clone, Debug, Serialize)]
@@ -90,6 +91,11 @@ pub fn scan_local_mcp_configs_with_secrets_in(home: &Path) -> Result<LocalMcpDis
             "claude_code",
             home.join(".claude.json"),
         ),
+        (
+            McpHost::Claude3p,
+            "claude_3p",
+            home.join("Library/Application Support/Claude-3p/claude_desktop_config.json"),
+        ),
         (McpHost::Kiro, "kiro", home.join(".kiro/settings/mcp.json")),
         (
             McpHost::Reasonix,
@@ -109,6 +115,32 @@ pub fn scan_local_mcp_configs_with_secrets_in(home: &Path) -> Result<LocalMcpDis
         variants.extend(parse_host_config(host, key, &path, &content)?);
     }
     build_discovery(scanned, variants)
+}
+
+pub fn select_local_mcp_from_config(
+    path: &Path,
+    host_key: &str,
+    name: &str,
+) -> Result<LocalMcpSelection> {
+    let host = match host_key {
+        "codex" => McpHost::Codex,
+        "claude_code" => McpHost::ClaudeCode,
+        "claude_3p" => McpHost::Claude3p,
+        "kiro" => McpHost::Kiro,
+        "reasonix" => McpHost::Reasonix,
+        _ => anyhow::bail!("unsupported local MCP host {host_key}"),
+    };
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("read MCP configuration {path:?}"))?;
+    let variants = parse_host_config(host, host_key, path, &content)?;
+    variants
+        .into_iter()
+        .find(|variant| variant.public.name == name)
+        .map(|variant| LocalMcpSelection {
+            variant: variant.public,
+            literal_credentials: variant.literal_credentials,
+        })
+        .context("MCP service was not found in local configuration backup")
 }
 
 pub fn without_managed_targets(
@@ -306,8 +338,13 @@ fn private_variant(
     } = raw;
     let literal_credentials: BTreeMap<String, String> = env
         .iter()
-        .chain(headers.iter())
-        .filter_map(|(key, value)| (!is_reference(value)).then_some((key.clone(), value.clone())))
+        .filter_map(|(key, value)| {
+            (!is_reference(value) && is_credential_name(key))
+                .then_some((key.clone(), value.clone()))
+        })
+        .chain(headers.iter().filter_map(|(key, value)| {
+            (!is_reference(value)).then_some((key.clone(), value.clone()))
+        }))
         .collect();
     let public = LocalMcpVariant {
         host: host.to_string(),
@@ -317,8 +354,8 @@ fn private_variant(
         command,
         args,
         url,
-        env: sanitize(&env),
-        headers: sanitize(&headers),
+        env: sanitize(&env, is_credential_name),
+        headers: sanitize(&headers, |_| true),
         credential_names: literal_credentials.keys().cloned().collect(),
     };
     let fingerprint = format!(
@@ -359,10 +396,13 @@ fn string_map(value: Option<&Value>) -> BTreeMap<String, String> {
 fn is_reference(value: &str) -> bool {
     value.starts_with("${") && value.ends_with('}')
 }
-fn sanitize(map: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+fn sanitize(
+    map: &BTreeMap<String, String>,
+    is_credential: impl Fn(&str) -> bool,
+) -> BTreeMap<String, String> {
     map.iter()
         .map(|(key, value)| {
-            if is_reference(value) {
+            if is_reference(value) || !is_credential(key) {
                 (key.clone(), value.clone())
             } else {
                 (key.clone(), format!("${{{key}}}"))

@@ -83,7 +83,7 @@ export const resources = {
       },
       mcp: {
         title: 'MCP',
-        help: 'Configure once and safely sync to Codex, Claude Code, Kiro, and Reasonix.',
+        help: 'Configure once and safely sync to Codex, Claude Code, Claude-3p, Kiro, and Reasonix.',
         add: 'Add MCP',
         managed: 'Managed services',
         apps: 'Synced apps',
@@ -118,6 +118,8 @@ export const resources = {
         saveTargets: 'Save targets',
         noTargets: 'No Apps selected',
         targetsSaved: 'MCP sync targets updated.',
+        repairLocal: 'Repair local config',
+        repairedLocal: 'Local MCP configuration repaired.',
         name: 'Name',
         transport: 'Transport',
         command: 'Command',
@@ -705,6 +707,7 @@ export const resources = {
       tools: {
         opencode: 'OpenCode',
         claude_code: 'Claude Code',
+        claude_3p: 'Claude-3p',
         codex: 'Codex',
         cursor: 'Cursor',
         amp: 'Amp',
@@ -835,7 +838,7 @@ export const resources = {
       },
       mcp: {
         title: 'MCP',
-        help: '一次配置，安全同步到 Codex、Claude Code、Kiro 和 Reasonix。',
+        help: '一次配置，安全同步到 Codex、Claude Code、Claude-3p、Kiro 和 Reasonix。',
         add: '添加 MCP',
         managed: '托管服务',
         apps: '已同步 App',
@@ -870,6 +873,8 @@ export const resources = {
         saveTargets: '保存目标',
         noTargets: '尚未选择 App',
         targetsSaved: 'MCP 同步目标已更新。',
+        repairLocal: '修复本地配置',
+        repairedLocal: '本地 MCP 配置已修复。',
         name: '名称',
         transport: '传输方式',
         command: '命令',
@@ -1434,6 +1439,7 @@ export const resources = {
       tools: {
         opencode: 'OpenCode',
         claude_code: 'Claude Code',
+        claude_3p: 'Claude-3p',
         codex: 'Codex',
         cursor: 'Cursor',
         amp: 'Amp',

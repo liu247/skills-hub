@@ -28,12 +28,16 @@ use crate::core::installer::{
     install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
-use crate::core::mcp::{validate_mcp_server_input, McpServerInput, McpTransport};
+use crate::core::mcp::{
+    credential_name_from_reference, validate_mcp_server_input, McpServerInput, McpTransport,
+};
 use crate::core::mcp_adapters::{
-    global_config_path, remove_host_file, sync_host_file, BridgeRuntime, McpHost,
+    global_config_path, remove_host_file, requires_credential_bridge, sync_host_file,
+    BridgeRuntime, McpHost,
 };
 use crate::core::mcp_discovery::{
-    scan_local_mcp_configs_with_secrets_in, without_managed_targets, LocalMcpPlan,
+    scan_local_mcp_configs_with_secrets_in, select_local_mcp_from_config, without_managed_targets,
+    LocalMcpPlan,
 };
 use crate::core::mcp_import::{scan_mcp_config_files, McpImportCandidate};
 use crate::core::network_proxy::{
@@ -105,7 +109,7 @@ pub struct LocalMcpImportSelection {
     pub host: String,
 }
 
-const MCP_TARGETS: [&str; 4] = ["codex", "claude_code", "kiro", "reasonix"];
+const MCP_TARGETS: [&str; 5] = ["codex", "claude_code", "claude_3p", "kiro", "reasonix"];
 
 fn json_map_to_string_map(
     map: &serde_json::Map<String, serde_json::Value>,
@@ -518,16 +522,7 @@ pub async fn import_local_mcp_selection(
             };
             validate_mcp_server_input(&input)?;
             store.upsert_mcp_server(&record)?;
-            let secret_names = record
-                .env
-                .keys()
-                .chain(record.headers.keys())
-                .cloned()
-                .collect::<Vec<_>>();
-            let refs = secret_names
-                .iter()
-                .map(|name| McpSecretRefRecord::new(&record.id, name))
-                .collect::<Vec<_>>();
+            let refs = secret_refs_from_record(&record)?;
             if let Err(err) = (|| -> anyhow::Result<()> {
                 store.replace_mcp_secret_refs(&record.id, &refs)?;
                 for (name, value) in &selected.literal_credentials {
@@ -600,6 +595,7 @@ fn sync_local_selection(
     let host = match tool {
         "codex" => McpHost::Codex,
         "claude_code" => McpHost::ClaudeCode,
+        "claude_3p" => McpHost::Claude3p,
         "kiro" => McpHost::Kiro,
         "reasonix" => McpHost::Reasonix,
         _ => anyhow::bail!("unsupported MCP target {tool}"),
@@ -628,7 +624,7 @@ fn bridge_runtime_for_server(
     store: &SkillStore,
     server: &McpServerRecord,
 ) -> anyhow::Result<Option<BridgeRuntime>> {
-    (!server.env.is_empty() || !server.headers.is_empty())
+    requires_credential_bridge(server)
         .then(|| {
             Ok::<_, anyhow::Error>(BridgeRuntime {
                 executable: std::env::current_exe().context("resolve Skills Hub executable")?,
@@ -761,6 +757,146 @@ pub async fn delete_mcp_server(
 }
 
 #[tauri::command]
+pub async fn repair_local_mcp_server(
+    store: State<'_, SkillStore>,
+    server_id: String,
+) -> Result<McpServerDto, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let current = store
+            .list_mcp_servers()?
+            .into_iter()
+            .find(|server| server.id == server_id)
+            .context("MCP server not found")?;
+        let host = current
+            .source_url
+            .as_deref()
+            .and_then(|source| source.strip_prefix("local://"))
+            .context("MCP server was not imported from a local configuration")?;
+        let path = current
+            .source_path
+            .as_deref()
+            .context("local MCP source path is missing")?;
+        let selected = local_backup_selection(std::path::Path::new(path), host, &current.name)
+            .context("no local configuration backup is available to repair this MCP server")?;
+        let mut repaired = current.clone();
+        repaired.transport = selected.variant.transport;
+        repaired.command = selected.variant.command;
+        repaired.args = selected.variant.args;
+        repaired.env = string_map_to_json_map(selected.variant.env);
+        repaired.url = selected.variant.url;
+        repaired.headers = string_map_to_json_map(selected.variant.headers);
+        repaired.updated_at = now_ms();
+        validate_mcp_server_input(&McpServerInput {
+            name: repaired.name.clone(),
+            transport: if repaired.transport == "http" {
+                McpTransport::Http
+            } else {
+                McpTransport::Stdio
+            },
+            command: repaired.command.clone(),
+            args: repaired.args.clone(),
+            env: json_map_to_string_map(&repaired.env)?,
+            url: repaired.url.clone(),
+            headers: json_map_to_string_map(&repaired.headers)?,
+        })?;
+        store.upsert_mcp_server(&repaired)?;
+        store.replace_mcp_secret_refs(&repaired.id, &secret_refs_from_record(&repaired)?)?;
+        for (name, value) in selected.literal_credentials {
+            OsCredentialStore.set(&repaired.id, &name, &value)?;
+        }
+        let bridge = bridge_runtime_for_server(&store, &repaired)?;
+        start_http_bridge(&bridge, &repaired)?;
+        for target in store.list_mcp_targets(&repaired.id)? {
+            let host = mcp_host(&target.tool)?;
+            sync_host_file(
+                host,
+                &repaired,
+                &global_config_path(host)?,
+                true,
+                bridge.as_ref(),
+            )?;
+            store.upsert_mcp_target(&McpServerTargetRecord {
+                id: target.id,
+                mcp_server_id: repaired.id.clone(),
+                tool: target.tool,
+                status: "ok".to_string(),
+                last_error: None,
+                synced_at: Some(now_ms()),
+            })?;
+        }
+        to_mcp_dto(&store, repaired)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+fn secret_refs_from_record(record: &McpServerRecord) -> anyhow::Result<Vec<McpSecretRefRecord>> {
+    let mut names = std::collections::BTreeSet::new();
+    for value in record.env.values().chain(record.headers.values()) {
+        let value = value
+            .as_str()
+            .context("MCP secret reference must be a string")?;
+        if let Some(name) = credential_name_from_reference(value) {
+            names.insert(name.to_string());
+        }
+    }
+    Ok(names
+        .into_iter()
+        .map(|name| McpSecretRefRecord::new(&record.id, &name))
+        .collect())
+}
+
+fn local_backup_selection(
+    path: &std::path::Path,
+    host: &str,
+    name: &str,
+) -> anyhow::Result<crate::core::mcp_discovery::LocalMcpSelection> {
+    let file_name = path
+        .file_name()
+        .context("local MCP source path must name a configuration file")?
+        .to_string_lossy();
+    let prefix = format!("{file_name}.skills-hub.bak-");
+    let parent = path
+        .parent()
+        .context("local MCP source path must have a parent directory")?;
+    let mut backups = std::fs::read_dir(parent)
+        .context("read local MCP configuration backup directory")?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            candidate
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    backups.sort_by_key(|candidate| {
+        std::cmp::Reverse(
+            candidate
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok(),
+        )
+    });
+
+    for backup in backups {
+        let Ok(selected) = select_local_mcp_from_config(&backup, host, name) else {
+            continue;
+        };
+        let has_runtime_value = selected
+            .variant
+            .env
+            .values()
+            .any(|value| credential_name_from_reference(value).is_none());
+        if has_runtime_value || !selected.literal_credentials.is_empty() {
+            return Ok(selected);
+        }
+    }
+    anyhow::bail!("no local configuration backup with recoverable MCP values is available")
+}
+
+#[tauri::command]
 pub async fn set_mcp_server_targets(
     store: State<'_, SkillStore>,
     server_id: String,
@@ -780,7 +916,7 @@ pub async fn set_mcp_server_targets(
             .into_iter()
             .find(|record| record.id == server_id)
             .context("MCP server not found")?;
-        if (!server.env.is_empty() || !server.headers.is_empty()) && !server.proxy_enabled {
+        if requires_credential_bridge(&server) && !server.proxy_enabled {
             anyhow::bail!("credential proxy is disabled for this MCP server");
         }
         let bridge = bridge_runtime_for_server(&store, &server)?;
@@ -821,6 +957,7 @@ fn mcp_host(tool: &str) -> anyhow::Result<McpHost> {
     match tool {
         "codex" => Ok(McpHost::Codex),
         "claude_code" => Ok(McpHost::ClaudeCode),
+        "claude_3p" => Ok(McpHost::Claude3p),
         "kiro" => Ok(McpHost::Kiro),
         "reasonix" => Ok(McpHost::Reasonix),
         _ => anyhow::bail!("unsupported MCP target {tool}"),
@@ -840,10 +977,10 @@ pub async fn sync_mcp_server(
             .into_iter()
             .find(|record| record.id == server_id)
             .context("MCP server not found")?;
-        if (!server.env.is_empty() || !server.headers.is_empty()) && !server.proxy_enabled {
+        if requires_credential_bridge(&server) && !server.proxy_enabled {
             anyhow::bail!("credential proxy is disabled for this MCP server");
         }
-        let requires_bridge = !server.env.is_empty() || !server.headers.is_empty();
+        let requires_bridge = requires_credential_bridge(&server);
         let bridge = requires_bridge
             .then(|| {
                 Ok::<_, anyhow::Error>(BridgeRuntime {

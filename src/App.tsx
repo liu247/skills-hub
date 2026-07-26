@@ -502,6 +502,19 @@ function App() {
     }
   }, [invokeTauri, loadMcpServers, t])
 
+  const repairLocalMcpServer = useCallback(async (serverId: string) => {
+    setMcpBusy(true)
+    try {
+      await invokeTauri<McpServerDto>('repair_local_mcp_server', { serverId })
+      await loadMcpServers()
+      toast.success(t('mcp.repairedLocal'))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMcpBusy(false)
+    }
+  }, [invokeTauri, loadMcpServers, t])
+
   const scanMcpGitSource = useCallback(async (repoUrl: string) => {
     setMcpBusy(true)
     try { setMcpCandidates(await invokeTauri<McpImportCandidateDto[]>('scan_mcp_git_source', { repoUrl })) }
@@ -3768,6 +3781,7 @@ function App() {
             onDelete={deleteMcpServer}
             onSync={syncMcpServer}
             onSetTargets={setMcpServerTargets}
+            onRepairLocal={repairLocalMcpServer}
             onScanLocal={() => void scanLocalMcpConfigs()}
             onOpenImport={() => setActiveView('mcp-add')}
             onCloseManualEditor={() => setActiveView('mcp')}

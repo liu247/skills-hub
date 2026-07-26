@@ -50,3 +50,27 @@ fn keeps_literal_credentials_private_while_preserving_them_for_selected_import()
         Some(&"local-secret".to_string())
     );
 }
+
+#[test]
+fn keeps_runtime_paths_direct_and_moves_only_secret_keys_to_credentials() {
+    let home = tempdir().unwrap();
+    fs::create_dir_all(home.path().join(".codex")).unwrap();
+    fs::write(
+        home.path().join(".codex/config.toml"),
+        "[mcp_servers.example]\ncommand = \"node\"\n[mcp_servers.example.env]\nNODE_PATH = \"/opt/node\"\nMCP_PDF_ALLOWED_PATHS = \"/tmp\"\nTAVILY_API_KEY = \"secret-value\"\n",
+    ).unwrap();
+
+    let discovery = scan_local_mcp_configs_with_secrets_in(home.path()).unwrap();
+    let selected = discovery.select("example", "codex").unwrap();
+    assert_eq!(selected.variant.env["NODE_PATH"], "/opt/node");
+    assert_eq!(selected.variant.env["MCP_PDF_ALLOWED_PATHS"], "/tmp");
+    assert_eq!(selected.variant.env["TAVILY_API_KEY"], "${TAVILY_API_KEY}");
+    assert_eq!(
+        selected.literal_credentials.get("TAVILY_API_KEY"),
+        Some(&"secret-value".to_string())
+    );
+    assert!(!selected.literal_credentials.contains_key("NODE_PATH"));
+    assert!(!selected
+        .literal_credentials
+        .contains_key("MCP_PDF_ALLOWED_PATHS"));
+}

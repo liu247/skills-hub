@@ -7,7 +7,7 @@ const t = ((key: string) => ({
   'mcp.targetsTitle': 'Manage sync targets',
   'mcp.targetsHelp': 'Choose the Apps that should receive this MCP service.',
   'mcp.saveTargets': 'Save targets',
-  cancel: 'Cancel', codex: 'Codex', claude_code: 'Claude Code', kiro: 'Kiro', reasonix: 'Reasonix',
+  cancel: 'Cancel', 'tools.codex': 'Codex', 'tools.claude_code': 'Claude Code', 'tools.claude_3p': 'Claude-3p', 'tools.kiro': 'Kiro', 'tools.reasonix': 'Reasonix',
 } as Record<string, string>)[key] ?? key) as unknown as TFunction
 
 describe('McpTargetModal', () => {
@@ -16,6 +16,7 @@ describe('McpTargetModal', () => {
     expect(markup).toContain('Manage sync targets')
     expect(markup).toContain('Codex')
     expect(markup).toContain('Claude Code')
+    expect(markup).toContain('Claude-3p')
     expect(markup).toContain('Kiro')
     expect(markup).toContain('checked')
   })

@@ -69,7 +69,7 @@ pub fn validate_mcp_server_input(input: &McpServerInput) -> Result<()> {
             || !key
                 .chars()
                 .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
-            || value != &format!("${{{key}}}")
+            || (is_credential_name(key) && value != &format!("${{{key}}}"))
         {
             anyhow::bail!("MCP environment values must be references in the form ${{NAME}}");
         }
@@ -89,4 +89,14 @@ pub fn credential_name_from_reference(value: &str) -> Option<&str> {
             .chars()
             .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_'))
     .then_some(name)
+}
+
+pub fn is_credential_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    upper.ends_with("_KEY")
+        || upper.ends_with("_TOKEN")
+        || upper.ends_with("_SECRET")
+        || upper.ends_with("_PASSWORD")
+        || upper == "PASSWORD"
+        || upper == "AUTHORIZATION"
 }

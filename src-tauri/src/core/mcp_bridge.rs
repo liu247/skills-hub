@@ -16,7 +16,8 @@ pub fn resolve_bridge_environment(
     for (name, reference) in references {
         let expected = format!("${{{name}}}");
         if reference != &expected {
-            anyhow::bail!("invalid credential reference for {name}");
+            environment.insert(name.clone(), reference.clone());
+            continue;
         }
         let value = credentials
             .get(server_id, name)?

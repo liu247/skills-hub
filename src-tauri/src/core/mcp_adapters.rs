@@ -3,12 +3,14 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
+use super::mcp::credential_name_from_reference;
 use super::skill_store::McpServerRecord;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum McpHost {
     Codex,
     ClaudeCode,
+    Claude3p,
     Kiro,
     Reasonix,
 }
@@ -25,11 +27,27 @@ pub struct BridgeRuntime {
     pub http_port: Option<u16>,
 }
 
+pub fn requires_credential_bridge(server: &McpServerRecord) -> bool {
+    server
+        .env
+        .values()
+        .chain(server.headers.values())
+        .filter_map(serde_json::Value::as_str)
+        .any(|value| credential_name_from_reference(value).is_some())
+}
+
 pub fn global_config_path(host: McpHost) -> Result<PathBuf> {
     let home = dirs::home_dir().context("resolve user home directory for MCP configuration")?;
+    global_config_path_in(&home, host)
+}
+
+pub fn global_config_path_in(home: &Path, host: McpHost) -> Result<PathBuf> {
     Ok(match host {
         McpHost::Codex => home.join(".codex/config.toml"),
         McpHost::ClaudeCode => home.join(".claude.json"),
+        McpHost::Claude3p => {
+            home.join("Library/Application Support/Claude-3p/claude_desktop_config.json")
+        }
         McpHost::Kiro => home.join(".kiro/settings/mcp.json"),
         McpHost::Reasonix => home.join(".reasonix/config.toml"),
     })
@@ -40,7 +58,7 @@ pub fn render_server(
     server: &McpServerRecord,
     bridge: Option<&BridgeRuntime>,
 ) -> Result<String> {
-    let requires_bridge = !server.env.is_empty() || !server.headers.is_empty();
+    let requires_bridge = requires_credential_bridge(server);
     let value = match server.transport.as_str() {
         "stdio" => render_stdio(server, requires_bridge, bridge)?,
         "http" => render_http(server, requires_bridge, bridge)?,
@@ -49,9 +67,11 @@ pub fn render_server(
     match host {
         McpHost::Codex => render_codex(server, &value),
         McpHost::Reasonix => render_reasonix(server, &value),
-        McpHost::ClaudeCode | McpHost::Kiro => Ok(serde_json::to_string_pretty(&json!({
-            "mcpServers": { server.name.clone(): value }
-        }))?),
+        McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
+            Ok(serde_json::to_string_pretty(&json!({
+                "mcpServers": { server.name.clone(): value }
+            }))?)
+        }
     }
 }
 
@@ -105,7 +125,7 @@ pub fn sync_host_file(
     };
     let rendered = render_server(host, server, bridge)?;
     let next = match host {
-        McpHost::ClaudeCode | McpHost::Kiro => {
+        McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
             merge_json_host_config(&existing, &rendered, &server.name, owns_existing_entry)?
         }
         McpHost::Codex => {
@@ -126,7 +146,9 @@ pub fn remove_host_file(host: McpHost, server_name: &str, path: &Path) -> Result
     }
     let existing = std::fs::read_to_string(path).context("read existing MCP configuration")?;
     let next = match host {
-        McpHost::ClaudeCode | McpHost::Kiro => remove_json_host_config(&existing, server_name)?,
+        McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
+            remove_json_host_config(&existing, server_name)?
+        }
         McpHost::Codex => remove_codex_toml_config(&existing, server_name)?,
         McpHost::Reasonix => remove_reasonix_toml_config(&existing, server_name)?,
     };
@@ -300,7 +322,7 @@ fn render_stdio(
         args.extend(server.args.clone());
         return Ok(json!({ "command": bridge.executable, "args": args }));
     }
-    Ok(json!({ "command": command, "args": server.args }))
+    Ok(json!({ "command": command, "args": server.args, "env": server.env }))
 }
 
 fn render_http(
@@ -332,6 +354,7 @@ fn render_codex(server: &McpServerRecord, value: &Value) -> Result<String> {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
             Value::Array(values) => toml_edit::value(toml_array(values)),
+            Value::Object(values) => toml_edit::Item::Table(toml_table(values)?),
             _ => anyhow::bail!("unsupported Codex field {key}"),
         };
     }
@@ -353,6 +376,7 @@ fn render_reasonix(server: &McpServerRecord, value: &Value) -> Result<String> {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
             Value::Array(values) => toml_edit::value(toml_array(values)),
+            Value::Object(values) => toml_edit::Item::Table(toml_table(values)?),
             _ => anyhow::bail!("unsupported Reasonix field {key}"),
         };
     }
@@ -366,4 +390,16 @@ fn toml_array(values: &[Value]) -> toml_edit::Array {
         array.push(value);
     }
     array
+}
+
+fn toml_table(values: &Map<String, Value>) -> Result<toml_edit::Table> {
+    let mut table = toml_edit::Table::new();
+    for (key, value) in values {
+        table[key] = toml_edit::value(
+            value
+                .as_str()
+                .context("MCP environment values must be strings")?,
+        );
+    }
+    Ok(table)
 }

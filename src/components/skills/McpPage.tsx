@@ -14,20 +14,21 @@ type McpPageProps = {
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
   onSetTargets: (serverId: string, tools: string[]) => Promise<void>
+  onRepairLocal: (serverId: string) => Promise<void>
   onScanLocal: () => void
   onOpenImport: () => void
   onCloseManualEditor: () => void
   t: TFunction
 }
 
-const targets = ['codex', 'claude_code', 'kiro', 'reasonix']
+const targets = ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix']
 
 const emptyServer = (): McpServerDto => ({
   id: '', name: '', transport: 'stdio', command: '', args: [], env: {}, cwd: null,
   url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
-const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onRepairLocal, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
   const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
   const [headerName, setHeaderName] = useState('Authorization')
@@ -37,7 +38,7 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards')
   const [activeSource, setActiveSource] = useState<string | null>(null)
   const [targetServer, setTargetServer] = useState<McpServerDto | null>(null)
-  const collections = useMemo(() => groupMcpServersBySource(servers, (host) => t('mcp.localSource', { app: host === 'claude_code' ? 'Claude Code' : host === 'reasonix' ? 'Reasonix' : host === 'kiro' ? 'Kiro' : 'Codex' })), [servers, t])
+  const collections = useMemo(() => groupMcpServersBySource(servers, (host) => t('mcp.localSource', { app: host === 'claude_code' ? 'Claude Code' : host === 'claude_3p' ? 'Claude-3p' : host === 'reasonix' ? 'Reasonix' : host === 'kiro' ? 'Kiro' : 'Codex' })), [servers, t])
 
   const credentialTotal = servers.reduce((total, server) => total + server.secret_refs.length, 0)
   const credentialReady = servers.reduce((total, server) => total + server.secret_refs.filter((secret) => secret.has_value).length, 0)
@@ -76,8 +77,8 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   </div> : null
 
   const renderServer = (server: McpServerDto) => <article className="mcp-server-card" key={server.id}>
-    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-badges">{server.targets.length ? server.targets.map((target) => <span className={target.status === 'error' ? 'mcp-target-badge error' : 'mcp-target-badge'} key={target.tool}>{t(target.tool)}</span>) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
-    <div className="mcp-server-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
+    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-badges">{server.targets.length ? server.targets.map((target) => <span className={target.status === 'error' ? 'mcp-target-badge error' : 'mcp-target-badge'} key={target.tool}>{t(`tools.${target.tool}`)}</span>) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
+    <div className="mcp-server-actions">{server.source_url?.startsWith('local://') ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void onRepairLocal(server.id)}>{t('mcp.repairLocal')}</button> : null}<button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
   </article>
 
   const targetModal = targetServer ? <McpTargetModal open busy={busy} selectedTools={targetServer.targets.map((target) => target.tool)} onClose={() => setTargetServer(null)} onSave={(tools) => { void onSetTargets(targetServer.id, tools); setTargetServer(null) }} t={t} /> : null

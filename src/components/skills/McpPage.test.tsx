@@ -54,6 +54,7 @@ describe('McpPage', () => {
         onDelete={async () => undefined}
         onSync={async () => undefined}
         onSetTargets={async () => undefined}
+        onRepairLocal={async () => undefined}
         onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
@@ -78,6 +79,7 @@ describe('McpPage', () => {
         onDelete={async () => undefined}
         onSync={async () => undefined}
         onSetTargets={async () => undefined}
+        onRepairLocal={async () => undefined}
         onScanLocal={() => undefined}
         onOpenImport={() => undefined}
         onCloseManualEditor={() => undefined}
@@ -90,7 +92,7 @@ describe('McpPage', () => {
   })
 
   it('renders local discovery sources as readable App labels', () => {
-    const markup = renderToStaticMarkup(<McpPage busy={false} initialManualEditor={false} servers={[{ id: 'local', name: 'filesystem', transport: 'stdio', command: 'npx', args: [], env: {}, cwd: null, url: null, headers: {}, enabled: true, proxy_enabled: true, source_url: 'local://codex', source_path: null, secret_refs: [], targets: [{ tool: 'codex', status: 'ok', last_error: null, synced_at: 1 }] }]} onSave={async () => null} onSetSecret={async () => undefined} onDelete={async () => undefined} onSync={async () => undefined} onSetTargets={async () => undefined} onScanLocal={() => undefined} onOpenImport={() => undefined} onCloseManualEditor={() => undefined} t={t} />)
+    const markup = renderToStaticMarkup(<McpPage busy={false} initialManualEditor={false} servers={[{ id: 'local', name: 'filesystem', transport: 'stdio', command: 'npx', args: [], env: {}, cwd: null, url: null, headers: {}, enabled: true, proxy_enabled: true, source_url: 'local://codex', source_path: null, secret_refs: [], targets: [{ tool: 'codex', status: 'ok', last_error: null, synced_at: 1 }] }]} onSave={async () => null} onSetSecret={async () => undefined} onDelete={async () => undefined} onSync={async () => undefined} onSetTargets={async () => undefined} onRepairLocal={async () => undefined} onScanLocal={() => undefined} onOpenImport={() => undefined} onCloseManualEditor={() => undefined} t={t} />)
 
     expect(markup).toContain('Local import · Codex')
   })

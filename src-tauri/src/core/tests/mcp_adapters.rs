@@ -11,6 +11,7 @@ fn secret_bearing_stdio_renders_bridge_for_all_hosts() {
     for host in [
         McpHost::Codex,
         McpHost::ClaudeCode,
+        McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
     ] {
@@ -149,11 +150,21 @@ fn supported_hosts_have_global_config_paths() {
     for host in [
         McpHost::Codex,
         McpHost::ClaudeCode,
+        McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
     ] {
         assert!(crate::core::mcp_adapters::global_config_path(host).is_ok());
     }
+}
+
+#[test]
+fn claude_3p_uses_its_own_desktop_configuration_path() {
+    let home = std::path::Path::new("/Users/example");
+    assert_eq!(
+        crate::core::mcp_adapters::global_config_path_in(home, McpHost::Claude3p).unwrap(),
+        home.join("Library/Application Support/Claude-3p/claude_desktop_config.json"),
+    );
 }
 
 #[test]
@@ -169,6 +180,7 @@ fn secret_bearing_http_renders_loopback_url_for_all_hosts() {
     for host in [
         McpHost::Codex,
         McpHost::ClaudeCode,
+        McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
     ] {

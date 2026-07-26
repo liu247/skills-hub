@@ -35,6 +35,28 @@ fn bridge_rejects_missing_credential() {
 }
 
 #[test]
+fn bridge_keeps_runtime_values_direct_and_resolves_only_secret_references() {
+    let store = MemoryCredentialStore::default();
+    store
+        .set("mcp-pdf", "TAVILY_API_KEY", "secret-value")
+        .unwrap();
+    let env = resolve_bridge_environment(
+        &store,
+        "mcp-pdf",
+        &BTreeMap::from([
+            ("NODE_PATH".into(), "/opt/node".into()),
+            ("MCP_PDF_ALLOWED_PATHS".into(), "/tmp".into()),
+            ("TAVILY_API_KEY".into(), "${TAVILY_API_KEY}".into()),
+        ]),
+    )
+    .unwrap();
+
+    assert_eq!(env["NODE_PATH"], "/opt/node");
+    assert_eq!(env["MCP_PDF_ALLOWED_PATHS"], "/tmp");
+    assert_eq!(env["TAVILY_API_KEY"], "secret-value");
+}
+
+#[test]
 fn bridge_resolves_header_reference_by_credential_name() {
     let store = MemoryCredentialStore::default();
     store.set("remote", "API_TOKEN", "secret-value").unwrap();
