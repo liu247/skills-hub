@@ -29,11 +29,12 @@ use crate::core::installer::{
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{
-    credential_name_from_reference, validate_mcp_server_input, McpServerInput, McpTransport,
+    credential_name_from_reference, is_credential_name, validate_mcp_server_input, McpServerInput,
+    McpTransport,
 };
 use crate::core::mcp_adapters::{
-    global_config_path, remove_host_file, requires_credential_bridge, sync_host_file,
-    BridgeRuntime, McpHost,
+    global_config_path, host_config_contains_server, remove_host_file, requires_credential_bridge,
+    sync_host_file, BridgeRuntime, McpHost,
 };
 use crate::core::mcp_discovery::{
     scan_local_mcp_configs_with_secrets_in, select_local_mcp_from_config, without_managed_targets,
@@ -437,6 +438,7 @@ pub async fn get_tool_config(store: State<'_, SkillStore>) -> Result<ToolConfigD
 pub async fn get_mcp_servers(store: State<'_, SkillStore>) -> Result<Vec<McpServerDto>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        repair_legacy_local_mcp_records(&store, &OsCredentialStore)?;
         store
             .list_mcp_servers()?
             .into_iter()
@@ -768,68 +770,107 @@ pub async fn repair_local_mcp_server(
             .into_iter()
             .find(|server| server.id == server_id)
             .context("MCP server not found")?;
-        let host = current
-            .source_url
-            .as_deref()
-            .and_then(|source| source.strip_prefix("local://"))
-            .context("MCP server was not imported from a local configuration")?;
-        let path = current
-            .source_path
-            .as_deref()
-            .context("local MCP source path is missing")?;
-        let selected = local_backup_selection(std::path::Path::new(path), host, &current.name)
-            .context("no local configuration backup is available to repair this MCP server")?;
-        let mut repaired = current.clone();
-        repaired.transport = selected.variant.transport;
-        repaired.command = selected.variant.command;
-        repaired.args = selected.variant.args;
-        repaired.env = string_map_to_json_map(selected.variant.env);
-        repaired.url = selected.variant.url;
-        repaired.headers = string_map_to_json_map(selected.variant.headers);
-        repaired.updated_at = now_ms();
-        validate_mcp_server_input(&McpServerInput {
-            name: repaired.name.clone(),
-            transport: if repaired.transport == "http" {
-                McpTransport::Http
-            } else {
-                McpTransport::Stdio
-            },
-            command: repaired.command.clone(),
-            args: repaired.args.clone(),
-            env: json_map_to_string_map(&repaired.env)?,
-            url: repaired.url.clone(),
-            headers: json_map_to_string_map(&repaired.headers)?,
-        })?;
-        store.upsert_mcp_server(&repaired)?;
-        store.replace_mcp_secret_refs(&repaired.id, &secret_refs_from_record(&repaired)?)?;
-        for (name, value) in selected.literal_credentials {
-            OsCredentialStore.set(&repaired.id, &name, &value)?;
-        }
-        let bridge = bridge_runtime_for_server(&store, &repaired)?;
-        start_http_bridge(&bridge, &repaired)?;
-        for target in store.list_mcp_targets(&repaired.id)? {
-            let host = mcp_host(&target.tool)?;
-            sync_host_file(
-                host,
-                &repaired,
-                &global_config_path(host)?,
-                true,
-                bridge.as_ref(),
-            )?;
-            store.upsert_mcp_target(&McpServerTargetRecord {
-                id: target.id,
-                mcp_server_id: repaired.id.clone(),
-                tool: target.tool,
-                status: "ok".to_string(),
-                last_error: None,
-                synced_at: Some(now_ms()),
-            })?;
-        }
+        let repaired = repair_local_mcp_record(&store, &OsCredentialStore, current)?;
         to_mcp_dto(&store, repaired)
     })
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+fn repair_legacy_local_mcp_records(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+) -> anyhow::Result<usize> {
+    let legacy = store
+        .list_mcp_servers()?
+        .into_iter()
+        .filter(|server| {
+            server
+                .source_url
+                .as_deref()
+                .is_some_and(|source| source.starts_with("local://"))
+                && store
+                    .list_mcp_secret_refs(&server.id)
+                    .map(|references| {
+                        references
+                            .iter()
+                            .any(|reference| !is_credential_name(&reference.env_var))
+                    })
+                    .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    let mut repaired = 0;
+    for server in legacy {
+        repair_local_mcp_record(store, credentials, server)?;
+        repaired += 1;
+    }
+    Ok(repaired)
+}
+
+fn repair_local_mcp_record(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+    current: McpServerRecord,
+) -> anyhow::Result<McpServerRecord> {
+    let host = current
+        .source_url
+        .as_deref()
+        .and_then(|source| source.strip_prefix("local://"))
+        .context("MCP server was not imported from a local configuration")?;
+    let path = current
+        .source_path
+        .as_deref()
+        .context("local MCP source path is missing")?;
+    let selected = local_backup_selection(std::path::Path::new(path), host, &current.name)
+        .context("no local configuration backup is available to repair this MCP server")?;
+    let mut repaired = current.clone();
+    repaired.transport = selected.variant.transport;
+    repaired.command = selected.variant.command;
+    repaired.args = selected.variant.args;
+    repaired.env = string_map_to_json_map(selected.variant.env);
+    repaired.url = selected.variant.url;
+    repaired.headers = string_map_to_json_map(selected.variant.headers);
+    repaired.updated_at = now_ms();
+    validate_mcp_server_input(&McpServerInput {
+        name: repaired.name.clone(),
+        transport: if repaired.transport == "http" {
+            McpTransport::Http
+        } else {
+            McpTransport::Stdio
+        },
+        command: repaired.command.clone(),
+        args: repaired.args.clone(),
+        env: json_map_to_string_map(&repaired.env)?,
+        url: repaired.url.clone(),
+        headers: json_map_to_string_map(&repaired.headers)?,
+    })?;
+    store.upsert_mcp_server(&repaired)?;
+    store.replace_mcp_secret_refs(&repaired.id, &secret_refs_from_record(&repaired)?)?;
+    for (name, value) in selected.literal_credentials {
+        credentials.set(&repaired.id, &name, &value)?;
+    }
+    let bridge = bridge_runtime_for_server(store, &repaired)?;
+    start_http_bridge(&bridge, &repaired)?;
+    for target in store.list_mcp_targets(&repaired.id)? {
+        let host = mcp_host(&target.tool)?;
+        sync_host_file(
+            host,
+            &repaired,
+            &global_config_path(host)?,
+            true,
+            bridge.as_ref(),
+        )?;
+        store.upsert_mcp_target(&McpServerTargetRecord {
+            id: target.id,
+            mcp_server_id: repaired.id.clone(),
+            tool: target.tool,
+            status: "ok".to_string(),
+            last_error: None,
+            synced_at: Some(now_ms()),
+        })?;
+    }
+    Ok(repaired)
 }
 
 fn secret_refs_from_record(record: &McpServerRecord) -> anyhow::Result<Vec<McpSecretRefRecord>> {
@@ -901,6 +942,7 @@ pub async fn set_mcp_server_targets(
     store: State<'_, SkillStore>,
     server_id: String,
     tools: Vec<String>,
+    overwrite_existing: Option<bool>,
 ) -> Result<McpServerDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -922,13 +964,40 @@ pub async fn set_mcp_server_targets(
         let bridge = bridge_runtime_for_server(&store, &server)?;
         start_http_bridge(&bridge, &server)?;
         let existing = store.list_mcp_targets(&server.id)?;
+        let additions = desired
+            .iter()
+            .filter(|tool| !existing.iter().any(|target| target.tool == tool.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !overwrite_existing.unwrap_or(false) {
+            let mut conflicts = additions
+                .iter()
+                .filter_map(|tool| {
+                    let host = mcp_host(tool).ok()?;
+                    let path = global_config_path(host).ok()?;
+                    host_config_contains_server(host, &path, &server.name)
+                        .ok()?
+                        .then_some(tool.clone())
+                })
+                .collect::<Vec<_>>();
+            conflicts.sort();
+            if !conflicts.is_empty() {
+                anyhow::bail!("MCP_TARGET_CONFLICT|{}", conflicts.join(","));
+            }
+        }
         for tool in &desired {
             if existing.iter().any(|target| target.tool == *tool) {
                 continue;
             }
             let host = mcp_host(tool)?;
             let path = global_config_path(host)?;
-            sync_host_file(host, &server, &path, false, bridge.as_ref())?;
+            sync_host_file(
+                host,
+                &server,
+                &path,
+                overwrite_existing.unwrap_or(false),
+                bridge.as_ref(),
+            )?;
             store.upsert_mcp_target(&McpServerTargetRecord {
                 id: Uuid::new_v4().to_string(),
                 mcp_server_id: server.id.clone(),

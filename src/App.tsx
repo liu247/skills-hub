@@ -489,14 +489,17 @@ function App() {
     }
   }, [invokeTauri, loadMcpServers, t])
 
-  const setMcpServerTargets = useCallback(async (serverId: string, tools: string[]) => {
+  const setMcpServerTargets = useCallback(async (serverId: string, tools: string[], overwriteExisting = false) => {
     setMcpBusy(true)
     try {
-      await invokeTauri<McpServerDto>('set_mcp_server_targets', { serverId, tools })
+      await invokeTauri<McpServerDto>('set_mcp_server_targets', { serverId, tools, overwriteExisting })
       await loadMcpServers()
       toast.success(t('mcp.targetsSaved'))
     } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      if (raw.startsWith('MCP_TARGET_CONFLICT|')) throw err
       toast.error(err instanceof Error ? err.message : String(err))
+      throw err
     } finally {
       setMcpBusy(false)
     }

@@ -120,6 +120,26 @@ fn sync_json_host_file_merges_and_creates_backup() {
 }
 
 #[test]
+fn detects_an_existing_unmanaged_server_before_target_takeover() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mcp.json");
+    std::fs::write(&path, r#"{"mcpServers":{"playwright":{"command":"npx"}}}"#).unwrap();
+
+    assert!(crate::core::mcp_adapters::host_config_contains_server(
+        McpHost::Kiro,
+        &path,
+        "playwright"
+    )
+    .unwrap());
+    assert!(!crate::core::mcp_adapters::host_config_contains_server(
+        McpHost::Kiro,
+        &path,
+        "mcp-pdf"
+    )
+    .unwrap());
+}
+
+#[test]
 fn reasonix_merge_preserves_other_plugins_and_protects_unowned_collision() {
     let existing = "default_model = \"x\"\n[[plugins]]\nname = \"other\"\ncommand = \"other\"\n[[plugins]]\nname = \"github\"\ncommand = \"old\"\n";
     let replacement = "[[plugins]]\nname = \"github\"\ncommand = \"new\"\n";

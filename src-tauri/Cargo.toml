@@ -38,7 +38,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 junction = "1.1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2.1"
-keyring = "3"
+keyring = { version = "3", features = ["apple-native"] }
 toml_edit = "0.23"
 tiny_http = "0.12"
 

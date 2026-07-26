@@ -4,6 +4,7 @@ import type { TFunction } from 'i18next'
 import type { McpServerDto } from './types'
 import { groupMcpServersBySource } from './mcpWorkspace'
 import McpTargetModal from './modals/McpTargetModal'
+import McpTargetConflictModal from './modals/McpTargetConflictModal'
 
 type McpPageProps = {
   servers: McpServerDto[]
@@ -13,7 +14,7 @@ type McpPageProps = {
   onSetSecret: (serverId: string, envVar: string, value: string) => Promise<void>
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
-  onSetTargets: (serverId: string, tools: string[]) => Promise<void>
+  onSetTargets: (serverId: string, tools: string[], overwriteExisting?: boolean) => Promise<void>
   onRepairLocal: (serverId: string) => Promise<void>
   onScanLocal: () => void
   onOpenImport: () => void
@@ -38,6 +39,7 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards')
   const [activeSource, setActiveSource] = useState<string | null>(null)
   const [targetServer, setTargetServer] = useState<McpServerDto | null>(null)
+  const [targetConflict, setTargetConflict] = useState<{ tools: string[]; selectedTools: string[] } | null>(null)
   const collections = useMemo(() => groupMcpServersBySource(servers, (host) => t('mcp.localSource', { app: host === 'claude_code' ? 'Claude Code' : host === 'claude_3p' ? 'Claude-3p' : host === 'reasonix' ? 'Reasonix' : host === 'kiro' ? 'Kiro' : 'Codex' })), [servers, t])
 
   const credentialTotal = servers.reduce((total, server) => total + server.secret_refs.length, 0)
@@ -81,7 +83,20 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
     <div className="mcp-server-actions">{server.source_url?.startsWith('local://') ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void onRepairLocal(server.id)}>{t('mcp.repairLocal')}</button> : null}<button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
   </article>
 
-  const targetModal = targetServer ? <McpTargetModal open busy={busy} selectedTools={targetServer.targets.map((target) => target.tool)} onClose={() => setTargetServer(null)} onSave={(tools) => { void onSetTargets(targetServer.id, tools); setTargetServer(null) }} t={t} /> : null
+  const saveTargets = async (tools: string[], overwriteExisting = false) => {
+    if (!targetServer) return
+    try {
+      await onSetTargets(targetServer.id, tools, overwriteExisting)
+      setTargetConflict(null)
+      setTargetServer(null)
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error)
+      if (raw.startsWith('MCP_TARGET_CONFLICT|')) {
+        setTargetConflict({ tools: raw.slice('MCP_TARGET_CONFLICT|'.length).split(',').filter(Boolean), selectedTools: tools })
+      }
+    }
+  }
+  const targetModal = <>{targetServer ? <McpTargetModal open busy={busy} selectedTools={targetServer.targets.map((target) => target.tool)} onClose={() => setTargetServer(null)} onSave={(tools) => { void saveTargets(tools) }} t={t} /> : null}{targetServer && targetConflict ? <McpTargetConflictModal open busy={busy} tools={targetConflict.tools} serverName={targetServer.name} onCancel={() => setTargetConflict(null)} onReplace={() => void saveTargets(targetConflict.selectedTools, true)} t={t} /> : null}</>
 
   if (currentCollection) return <><div className="mcp-workspace"><div className="collection-breadcrumb"><button type="button" className="btn btn-secondary" onClick={() => setActiveSource(null)}><ChevronLeft size={15}/>{t('mcp.back')}</button><span className="collection-breadcrumb-name">{sourceLabel(currentCollection.key)}</span><button type="button" className="btn btn-secondary mcp-source-sync" disabled={busy} onClick={() => void Promise.all(currentCollection.servers.map((server) => onSync(server.id, targets)))}><RefreshCw size={15}/>{t('mcp.sourceSync')}</button></div>{renderEditor()}<div className="mcp-server-list">{currentCollection.servers.map(renderServer)}</div></div>{targetModal}</>
 

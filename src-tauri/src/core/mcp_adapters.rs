@@ -140,6 +140,43 @@ pub fn sync_host_file(
     })
 }
 
+pub fn host_config_contains_server(host: McpHost, path: &Path, server_name: &str) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let existing = std::fs::read_to_string(path).context("read existing MCP configuration")?;
+    match host {
+        McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
+            let document = serde_json::from_str::<Value>(&existing)
+                .context("parse existing MCP JSON configuration")?;
+            Ok(document
+                .get("mcpServers")
+                .and_then(Value::as_object)
+                .is_some_and(|servers| servers.contains_key(server_name)))
+        }
+        McpHost::Codex => {
+            let document = existing
+                .parse::<toml_edit::DocumentMut>()
+                .context("parse existing Codex TOML configuration")?;
+            Ok(document["mcp_servers"]
+                .as_table()
+                .is_some_and(|servers| servers.contains_key(server_name)))
+        }
+        McpHost::Reasonix => {
+            let document = existing
+                .parse::<toml_edit::DocumentMut>()
+                .context("parse existing Reasonix TOML configuration")?;
+            Ok(document["plugins"]
+                .as_array_of_tables()
+                .is_some_and(|plugins| {
+                    plugins
+                        .iter()
+                        .any(|plugin| plugin["name"].as_str() == Some(server_name))
+                }))
+        }
+    }
+}
+
 pub fn remove_host_file(host: McpHost, server_name: &str, path: &Path) -> Result<McpSyncOutcome> {
     if !path.exists() {
         return Ok(McpSyncOutcome { backup_path: None });

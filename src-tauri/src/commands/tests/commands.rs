@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::credential_store::{CredentialStore, MemoryCredentialStore};
 use crate::core::skill_store::SkillRecord;
 
 #[test]
@@ -29,6 +30,72 @@ fn mcp_dto_never_serializes_secret_values() {
     let encoded = serde_json::to_string(&dto).unwrap();
     assert!(encoded.contains("GITHUB_TOKEN"));
     assert!(!encoded.contains("secret-value"));
+}
+
+#[test]
+fn repairs_legacy_local_mcp_records_from_backup_without_proxying_runtime_values() {
+    let (dir, store) = make_store();
+    let config = dir.path().join("config.toml");
+    std::fs::write(
+        &config,
+        "[mcp_servers.mcp-pdf]\ncommand = \"bridge\"\nargs = []\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("config.toml.skills-hub.bak-1"),
+        "[mcp_servers.mcp-pdf]\ncommand = \"uvx\"\nargs = [\"mcp-pdf\"]\n[mcp_servers.mcp-pdf.env]\nMCP_PDF_ALLOWED_PATHS = \"/tmp\"\nTAVILY_API_KEY = \"secret-value\"\n",
+    )
+    .unwrap();
+
+    let mut server =
+        crate::core::skill_store::McpServerRecord::stdio("mcp-pdf-id", "mcp-pdf", "bridge", vec![]);
+    server.source_url = Some("local://codex".to_string());
+    server.source_path = Some(config.to_string_lossy().to_string());
+    server.env.insert(
+        "MCP_PDF_ALLOWED_PATHS".to_string(),
+        serde_json::Value::String("${MCP_PDF_ALLOWED_PATHS}".to_string()),
+    );
+    server.env.insert(
+        "TAVILY_API_KEY".to_string(),
+        serde_json::Value::String("${TAVILY_API_KEY}".to_string()),
+    );
+    store.upsert_mcp_server(&server).unwrap();
+    store
+        .replace_mcp_secret_refs(
+            &server.id,
+            &[
+                McpSecretRefRecord::new(&server.id, "MCP_PDF_ALLOWED_PATHS"),
+                McpSecretRefRecord::new(&server.id, "TAVILY_API_KEY"),
+            ],
+        )
+        .unwrap();
+    let credentials = MemoryCredentialStore::default();
+
+    assert_eq!(
+        repair_legacy_local_mcp_records(&store, &credentials).unwrap(),
+        1
+    );
+
+    let repaired = store
+        .list_mcp_servers()
+        .unwrap()
+        .into_iter()
+        .find(|record| record.id == server.id)
+        .unwrap();
+    assert_eq!(repaired.command.as_deref(), Some("uvx"));
+    assert_eq!(repaired.env["MCP_PDF_ALLOWED_PATHS"], "/tmp");
+    assert_eq!(repaired.env["TAVILY_API_KEY"], "${TAVILY_API_KEY}");
+    assert_eq!(
+        credentials
+            .get(&server.id, "TAVILY_API_KEY")
+            .unwrap()
+            .as_deref(),
+        Some("secret-value")
+    );
+    assert_eq!(
+        store.list_mcp_secret_refs(&server.id).unwrap(),
+        vec![McpSecretRefRecord::new(&server.id, "TAVILY_API_KEY")]
+    );
 }
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
