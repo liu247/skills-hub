@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react'
-import { Bot, KeyRound } from 'lucide-react'
+import { Bot, ChevronDown, KeyRound } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { AiProviderConfigDto } from './types'
 
@@ -90,16 +90,35 @@ type AiProviderSettingsProps = {
   t: TFunction
 }
 
-const AiProviderSettings = ({ providers, onSave, onSetApiKey, onDeleteApiKey, onTest, t }: AiProviderSettingsProps) => (
-  <section className="settings-card">
-    <div className="settings-card-head">
-      <span className="settings-card-icon"><Bot size={18} /></span>
-      <div><h2>{t('aiSettings.title')}</h2><p>{t('aiSettings.description')}</p></div>
-    </div>
-    <div className="settings-card-body settings-ai-provider-list">
-      {providers.map((provider) => <ProviderRow key={provider.provider} provider={provider} onSave={onSave} onSetApiKey={onSetApiKey} onDeleteApiKey={onDeleteApiKey} onTest={onTest} t={t} />)}
-    </div>
-  </section>
-)
+const AiProviderSettings = ({ providers, onSave, onSetApiKey, onDeleteApiKey, onTest, t }: AiProviderSettingsProps) => {
+  const [selectedProviderId, setSelectedProviderId] = useState<AiProviderConfigDto['provider']>(providers[0]?.provider ?? 'openai')
+  const selectedProvider = providers.find((provider) => provider.provider === selectedProviderId) ?? providers[0]
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-head">
+        <span className="settings-card-icon"><Bot size={18} /></span>
+        <div><h2>{t('aiSettings.title')}</h2><p>{t('aiSettings.description')}</p></div>
+      </div>
+      <div className="settings-card-body settings-ai-provider-list">
+        <div className="settings-field settings-ai-provider-selector">
+          <label className="settings-label" htmlFor="ai-provider-select">{t('aiSettings.provider')}</label>
+          <div className="settings-select-wrap">
+            <select
+              id="ai-provider-select"
+              className="settings-select"
+              value={selectedProvider?.provider ?? ''}
+              onChange={(event) => setSelectedProviderId(event.target.value as AiProviderConfigDto['provider'])}
+            >
+              {providers.map((provider) => <option key={provider.provider} value={provider.provider}>{provider.provider}</option>)}
+            </select>
+            <ChevronDown className="settings-select-caret" aria-hidden="true" />
+          </div>
+        </div>
+        {selectedProvider ? <ProviderRow provider={selectedProvider} onSave={onSave} onSetApiKey={onSetApiKey} onDeleteApiKey={onDeleteApiKey} onTest={onTest} t={t} /> : null}
+      </div>
+    </section>
+  )
+}
 
 export default memo(AiProviderSettings)

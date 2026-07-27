@@ -63,6 +63,7 @@ export const resources = {
       aiSettings: {
         title: 'AI parser configuration',
         description: 'Configure providers used to analyse Skill and MCP sources.',
+        provider: 'AI provider',
         configured: 'API key configured',
         notConfigured: 'API key not configured',
         enable: 'Enable provider',
@@ -858,6 +859,7 @@ export const resources = {
       aiSettings: {
         title: 'AI 解析配置',
         description: '配置用于解析 Skill 和 MCP 来源的 AI 提供商。',
+        provider: 'AI 提供商',
         configured: '已配置 API Key',
         notConfigured: '未配置 API Key',
         enable: '启用提供商',

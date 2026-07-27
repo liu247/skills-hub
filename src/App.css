@@ -5136,6 +5136,7 @@
 .mcp-target-option input { accent-color: var(--accent-primary); }
 
 .settings-ai-provider-list { display: flex; flex-direction: column; gap: 12px; }
+.settings-ai-provider-selector { margin-bottom: 0; }
 .settings-ai-provider { padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--bg-app); }
 .settings-ai-provider + .settings-ai-provider { margin-top: 0; }
 .settings-ai-provider .settings-field { margin-top: 10px; }
