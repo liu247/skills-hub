@@ -14,6 +14,7 @@ const t = ((key: string) => ({
   'aiSettings.apiKey': 'API key',
   'aiSettings.save': 'Save provider',
   'aiSettings.clear': 'Clear key',
+  'aiSettings.test': 'Test connection',
 } as Record<string, string>)[key] ?? key) as unknown as TFunction
 
 describe('AiProviderSettings', () => {
@@ -24,6 +25,7 @@ describe('AiProviderSettings', () => {
         onSave={() => undefined}
         onSetApiKey={() => undefined}
         onDeleteApiKey={() => undefined}
+        onTest={() => undefined}
         t={t}
       />,
     )
@@ -31,5 +33,6 @@ describe('AiProviderSettings', () => {
     expect(markup).toContain('API key configured')
     expect(markup).not.toContain('secret-value')
     expect(markup).toContain('type="password"')
+    expect(markup).toContain('Test connection')
   })
 })

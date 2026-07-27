@@ -43,6 +43,7 @@ type SettingsPageProps = {
   onAiProviderConfigSave: (config: Omit<AiProviderConfigDto, 'has_api_key'>) => void
   onAiProviderApiKeySet: (provider: AiProviderConfigDto['provider'], value: string) => void
   onAiProviderApiKeyDelete: (provider: AiProviderConfigDto['provider']) => void
+  onAiProviderTest: (provider: AiProviderConfigDto['provider']) => void
   onBack: () => void
   t: TFunction
 }
@@ -68,6 +69,7 @@ const SettingsPage = ({
   onAiProviderConfigSave,
   onAiProviderApiKeySet,
   onAiProviderApiKeyDelete,
+  onAiProviderTest,
   onBack,
   t,
 }: SettingsPageProps) => {
@@ -287,6 +289,7 @@ const SettingsPage = ({
               onSave={onAiProviderConfigSave}
               onSetApiKey={onAiProviderApiKeySet}
               onDeleteApiKey={onAiProviderApiKeyDelete}
+              onTest={onAiProviderTest}
               t={t}
             />
 

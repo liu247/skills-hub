@@ -15,7 +15,6 @@ type McpPageProps = {
   onDelete: (serverId: string) => Promise<void>
   onSync: (serverId: string, tools: string[]) => Promise<void>
   onSetTargets: (serverId: string, tools: string[], overwriteExisting?: boolean) => Promise<void>
-  onRepairLocal: (serverId: string) => Promise<void>
   onScanLocal: () => void
   onOpenImport: () => void
   onCloseManualEditor: () => void
@@ -29,10 +28,20 @@ const emptyServer = (): McpServerDto => ({
   url: '', headers: {}, enabled: true, proxy_enabled: true, source_url: null, source_path: null, secret_refs: [], targets: [],
 })
 
-const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onRepairLocal, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+const keyValueText = (values: Record<string, string>) => Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n')
+const parseKeyValueText = (value: string) => Object.fromEntries(value.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+  const separator = line.indexOf('=')
+  return separator > 0 ? [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] : [line, '']
+}))
+const referenceName = (value: string) => value.match(/^\$\{([A-Z0-9_]+)\}$/)?.[1]
+
+const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
   const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({})
   const [headerName, setHeaderName] = useState('Authorization')
+  const [envText, setEnvText] = useState('')
+  const [headersText, setHeadersText] = useState('')
   const [query, setQuery] = useState('')
   const [sourceFilter, setSourceFilter] = useState('all')
   const [sortBy, setSortBy] = useState<'updated' | 'name'>('updated')
@@ -56,31 +65,45 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
   const save = async () => {
     if (!draft) return
     const names = secretNames.split(',').map((name) => name.trim()).filter(Boolean)
-    const env = Object.fromEntries(names.map((name) => [name, `\${${name}}`]))
-    const headers = draft.transport === 'http' && names[0] ? { [headerName.trim() || 'Authorization']: `\${${names[0]}}` } : {}
-    const saved = await onSave({ ...draft, env: draft.transport === 'stdio' ? env : {}, headers, secret_refs: names.map((env_var) => ({ env_var, has_value: false })) })
-    if (saved) for (const name of names) {
-      const value = window.prompt(t('mcp.secretPrompt', { name }))
-      if (value) await onSetSecret(saved.id, name, value)
-    }
+    const env = draft.transport === 'stdio' ? parseKeyValueText(envText) : {}
+    const headers = draft.transport === 'http' ? parseKeyValueText(headersText) : {}
+    if (draft.transport === 'stdio') for (const name of names) if (!env[name]) env[name] = `\${${name}}`
+    if (draft.transport === 'http' && names[0] && !Object.values(headers).some(referenceName)) headers[headerName.trim() || 'Authorization'] = `\${${names[0]}}`
+    const references = new Set([...Object.values(env), ...Object.values(headers)].map(referenceName).filter((name): name is string => Boolean(name)))
+    const saved = await onSave({ ...draft, env, headers, secret_refs: [...references].map((env_var) => ({ env_var, has_value: draft.secret_refs.some((item) => item.env_var === env_var && item.has_value) })) })
+    if (saved) for (const [name, value] of Object.entries(secretValues)) if (value.trim()) await onSetSecret(saved.id, name, value)
     setDraft(null)
     if (initialManualEditor) onCloseManualEditor()
     setSecretNames('')
+    setSecretValues({})
+    setEnvText('')
+    setHeadersText('')
+  }
+
+  const openRepairEditor = (server: McpServerDto) => {
+    setDraft(server)
+    setSecretNames(server.secret_refs.map((reference) => reference.env_var).join(', '))
+    setSecretValues({})
+    setEnvText(keyValueText(server.env))
+    setHeadersText(keyValueText(server.headers))
+    setHeaderName(Object.keys(server.headers)[0] ?? 'Authorization')
   }
 
   const sourceLabel = (key: string) => key === 'manual' ? t('mcp.manualSource') : collections.find((collection) => collection.key === key)?.label ?? key
 
+  const editorSecretNames = secretNames.split(',').map((name) => name.trim()).filter(Boolean)
   const renderEditor = () => draft ? <div className="mcp-editor">
     <label>{t('mcp.name')}<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })}/></label>
     <label>{t('mcp.transport')}<select value={draft.transport} onChange={(event) => setDraft({ ...draft, transport: event.target.value })}><option value="stdio">stdio</option><option value="http">HTTP</option></select></label>
-    {draft.transport === 'stdio' ? <><label>{t('mcp.command')}<input value={draft.command ?? ''} onChange={(event) => setDraft({ ...draft, command: event.target.value })}/></label><label>{t('mcp.args')}<input value={draft.args.join(' ')} onChange={(event) => setDraft({ ...draft, args: event.target.value.split(' ').filter(Boolean) })}/></label></> : <><label>{t('mcp.url')}<input value={draft.url ?? ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })}/></label><label>{t('mcp.headerName')}<input value={headerName} onChange={(event) => setHeaderName(event.target.value)}/></label></>}
+    {draft.transport === 'stdio' ? <><label>{t('mcp.command')}<input value={draft.command ?? ''} onChange={(event) => setDraft({ ...draft, command: event.target.value })}/></label><label>{t('mcp.args')}<input value={draft.args.join(' ')} onChange={(event) => setDraft({ ...draft, args: event.target.value.split(' ').filter(Boolean) })}/></label><label>{t('mcp.cwd')}<input value={draft.cwd ?? ''} onChange={(event) => setDraft({ ...draft, cwd: event.target.value || null })}/></label><label>{t('mcp.env')}<textarea value={envText} onChange={(event) => setEnvText(event.target.value)}/></label></> : <><label>{t('mcp.url')}<input value={draft.url ?? ''} onChange={(event) => setDraft({ ...draft, url: event.target.value })}/></label><label>{t('mcp.headers')}<textarea value={headersText} onChange={(event) => setHeadersText(event.target.value)}/></label><label>{t('mcp.headerName')}<input value={headerName} onChange={(event) => setHeaderName(event.target.value)}/></label></>}
     <label>{t('mcp.secrets')}<input placeholder="API_TOKEN, GITHUB_TOKEN" value={secretNames} onChange={(event) => setSecretNames(event.target.value)}/></label>
+    {editorSecretNames.map((name) => <label key={name}>{t('mcp.secretValue', { name })}<input type="password" value={secretValues[name] ?? ''} placeholder={draft.secret_refs.some((item) => item.env_var === name && item.has_value) ? t('mcp.secretConfigured') : ''} onChange={(event) => setSecretValues({ ...secretValues, [name]: event.target.value })}/></label>)}
     <div className="mcp-editor-actions"><button type="button" className="btn btn-secondary" onClick={() => { setDraft(null); if (initialManualEditor) onCloseManualEditor() }}>{t('cancel')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{t('save')}</button></div>
   </div> : null
 
   const renderServer = (server: McpServerDto) => <article className="mcp-server-card" key={server.id}>
     <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-badges">{server.targets.length ? server.targets.map((target) => <span className={target.status === 'error' ? 'mcp-target-badge error' : 'mcp-target-badge'} key={target.tool}>{t(`tools.${target.tool}`)}</span>) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
-    <div className="mcp-server-actions">{server.source_url?.startsWith('local://') ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => void onRepairLocal(server.id)}>{t('mcp.repairLocal')}</button> : null}<button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
+    <div className="mcp-server-actions">{server.source_url?.startsWith('local://') ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openRepairEditor(server)}>{t('mcp.repairLocal')}</button> : null}<button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
   </article>
 
   const saveTargets = async (tools: string[], overwriteExisting = false) => {

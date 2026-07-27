@@ -5,8 +5,9 @@ use tauri::State;
 use std::sync::Arc;
 
 use crate::core::ai_parser::{
-    delete_provider_api_key, get_provider_configs, save_provider_config, set_provider_api_key,
-    AiProvider, AiProviderConfig, AiProviderConfigStatus,
+    delete_provider_api_key, get_provider_configs, parse_source_with_ai, save_provider_config,
+    set_provider_api_key, test_provider_connection, AiParsePlan, AiProvider, AiProviderConfig,
+    AiProviderConfigStatus,
 };
 use crate::core::auto_update::{
     get_auto_update_config as get_auto_update_config_core, record_auto_update_triggered,
@@ -2175,6 +2176,36 @@ pub async fn set_ai_provider_api_key(provider: AiProvider, value: String) -> Res
 pub async fn delete_ai_provider_api_key(provider: AiProvider) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         delete_provider_api_key(&OsCredentialStore, provider)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn parse_ai_source(
+    store: State<'_, SkillStore>,
+    provider: AiProvider,
+    sourceUrl: String,
+) -> Result<AiParsePlan, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        parse_source_with_ai(&store, &OsCredentialStore, provider, &sourceUrl)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn test_ai_provider_connection(
+    provider: AiProvider,
+    store: State<'_, SkillStore>,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        test_provider_connection(&store, &OsCredentialStore, provider)
     })
     .await
     .map_err(|err| err.to_string())?

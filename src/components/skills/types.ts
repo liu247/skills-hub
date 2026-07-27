@@ -251,6 +251,27 @@ export type AiProviderConfigDto = {
   has_api_key: boolean
 }
 
+export type AiParsePlanDto = {
+  protocol_version: string
+  kind: 'skill' | 'mcp' | 'unknown'
+  summary: string
+  source: { url: string; path?: string | null; evidence: string[] }
+  confidence: string
+  warnings: string[]
+  skill_plan?: { name: string; source_url: string; subpath?: string | null } | null
+  mcp_plan?: {
+    name: string
+    transport: 'stdio' | 'http'
+    command?: string | null
+    args: string[]
+    cwd?: string | null
+    url?: string | null
+    env: Record<string, string>
+    headers: Record<string, string>
+    recommended_targets: string[]
+  } | null
+}
+
 export type AutoUpdateSkillProgressDto = {
   skill_id: string
   name: string

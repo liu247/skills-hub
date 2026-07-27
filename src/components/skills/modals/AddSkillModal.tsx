@@ -1,5 +1,5 @@
 import { memo, type SetStateAction } from 'react'
-import { Check, FolderOpen, GitBranch, Info } from 'lucide-react'
+import { Bot, Check, FolderOpen, GitBranch, Info } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import ScopeSelector from '../ScopeSelector'
 import ToolIcon from '../ToolIcon'
@@ -37,6 +37,7 @@ type AddSkillModalProps = {
   onInstallProjectsChange: (projects: SetStateAction<string[]>) => void
   onPickProject: () => Promise<string | undefined>
   onSubmit: () => void
+  onOpenAiParse: () => void
   t: TFunction
 }
 
@@ -66,6 +67,7 @@ const AddSkillModal = ({
   onInstallProjectsChange,
   onPickProject,
   onSubmit,
+  onOpenAiParse,
   t,
 }: AddSkillModalProps) => {
   if (!open) return null
@@ -93,6 +95,7 @@ const AddSkillModal = ({
       <div className="modal add-skill-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">{t('addSkillTitle')}</div>
+          <button className="btn btn-secondary btn-sm" type="button" onClick={onOpenAiParse} disabled={!canClose}><Bot size={14}/>{t('aiParse.open')}</button>
           <button
             className="modal-close"
             type="button"

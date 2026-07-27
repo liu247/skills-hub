@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { Github, Plus, Search, Server } from 'lucide-react'
+import { Bot, Github, Plus, Search, Server } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { McpImportCandidateDto } from './types'
 
@@ -9,10 +9,11 @@ type Props = {
   onScan: (url: string) => void
   onImport: (candidates: McpImportCandidateDto[]) => void
   onOpenManual: () => void
+  onOpenAiParse: () => void
   t: TFunction
 }
 
-const McpImportPage = ({ busy, candidates, onScan, onImport, onOpenManual, t }: Props) => {
+const McpImportPage = ({ busy, candidates, onScan, onImport, onOpenManual, onOpenAiParse, t }: Props) => {
   const [url, setUrl] = useState('')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const key = (candidate: McpImportCandidateDto) => `${candidate.source_path}:${candidate.name}`
@@ -21,7 +22,7 @@ const McpImportPage = ({ busy, candidates, onScan, onImport, onOpenManual, t }: 
   return <div className="mcp-import-workbench">
     <div className="mcp-import-heading">
       <div><h1>{t('mcpImport.title')}</h1><p>{t('mcpImport.help')}</p></div>
-      <button type="button" className="btn btn-secondary" onClick={onOpenManual}><Plus size={15}/>{t('mcpImport.manual')}</button>
+      <div className="mcp-import-heading-actions"><button type="button" className="btn btn-secondary" onClick={onOpenAiParse}><Bot size={15}/>{t('aiParse.open')}</button><button type="button" className="btn btn-secondary" onClick={onOpenManual}><Plus size={15}/>{t('mcpImport.manual')}</button></div>
     </div>
     <section className="mcp-import-toolbar" aria-label={t('mcpImport.github')}>
       <span className="mcp-import-github" aria-hidden="true"><Github size={19}/></span>

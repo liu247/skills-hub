@@ -8,10 +8,11 @@ type ProviderRowProps = {
   onSave: (config: Omit<AiProviderConfigDto, 'has_api_key'>) => void
   onSetApiKey: (provider: AiProviderConfigDto['provider'], value: string) => void
   onDeleteApiKey: (provider: AiProviderConfigDto['provider']) => void
+  onTest: (provider: AiProviderConfigDto['provider']) => void
   t: TFunction
 }
 
-const ProviderRow = ({ provider, onSave, onSetApiKey, onDeleteApiKey, t }: ProviderRowProps) => {
+const ProviderRow = ({ provider, onSave, onSetApiKey, onDeleteApiKey, onTest, t }: ProviderRowProps) => {
   const [enabled, setEnabled] = useState(provider.enabled)
   const [model, setModel] = useState(provider.model)
   const [baseUrl, setBaseUrl] = useState(provider.base_url)
@@ -73,6 +74,7 @@ const ProviderRow = ({ provider, onSave, onSetApiKey, onDeleteApiKey, t }: Provi
         </div>
       </div>
       <div className="settings-ai-actions">
+        <button type="button" className="btn btn-secondary btn-sm" disabled={!provider.has_api_key || !enabled} onClick={() => onTest(provider.provider)}>{t('aiSettings.test')}</button>
         <button type="button" className="btn btn-secondary btn-sm" onClick={save}>{t('aiSettings.save')}</button>
       </div>
     </div>
@@ -84,17 +86,18 @@ type AiProviderSettingsProps = {
   onSave: (config: Omit<AiProviderConfigDto, 'has_api_key'>) => void
   onSetApiKey: (provider: AiProviderConfigDto['provider'], value: string) => void
   onDeleteApiKey: (provider: AiProviderConfigDto['provider']) => void
+  onTest: (provider: AiProviderConfigDto['provider']) => void
   t: TFunction
 }
 
-const AiProviderSettings = ({ providers, onSave, onSetApiKey, onDeleteApiKey, t }: AiProviderSettingsProps) => (
+const AiProviderSettings = ({ providers, onSave, onSetApiKey, onDeleteApiKey, onTest, t }: AiProviderSettingsProps) => (
   <section className="settings-card">
     <div className="settings-card-head">
       <span className="settings-card-icon"><Bot size={18} /></span>
       <div><h2>{t('aiSettings.title')}</h2><p>{t('aiSettings.description')}</p></div>
     </div>
     <div className="settings-card-body settings-ai-provider-list">
-      {providers.map((provider) => <ProviderRow key={provider.provider} provider={provider} onSave={onSave} onSetApiKey={onSetApiKey} onDeleteApiKey={onDeleteApiKey} t={t} />)}
+      {providers.map((provider) => <ProviderRow key={provider.provider} provider={provider} onSave={onSave} onSetApiKey={onSetApiKey} onDeleteApiKey={onDeleteApiKey} onTest={onTest} t={t} />)}
     </div>
   </section>
 )

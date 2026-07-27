@@ -159,6 +159,8 @@ pub fn run() {
             commands::set_ai_provider_config,
             commands::set_ai_provider_api_key,
             commands::delete_ai_provider_api_key,
+            commands::parse_ai_source,
+            commands::test_ai_provider_connection,
             commands::get_github_proxy_config,
             commands::set_github_proxy_config,
             commands::get_github_proxy_url,

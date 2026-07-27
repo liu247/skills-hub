@@ -39,6 +39,7 @@ import ToolsPage from './components/skills/ToolsPage'
 import McpPage from './components/skills/McpPage'
 import McpImportPage from './components/skills/McpImportPage'
 import McpDiscoveryModal from './components/skills/modals/McpDiscoveryModal'
+import AiParseModal from './components/skills/modals/AiParseModal'
 import UpdatesPage from './components/skills/UpdatesPage'
 import WindowResizeHandles from './components/WindowResizeHandles'
 import {
@@ -65,6 +66,7 @@ import type {
   AutoUpdateConfigDto,
   AiProviderConfigDto,
   AiProviderId,
+  AiParsePlanDto,
   CollectionDto,
   FeaturedSkillDto,
   GitSkillCandidate,
@@ -220,6 +222,8 @@ function App() {
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
   const [localMcpPlan, setLocalMcpPlan] = useState<LocalMcpPlanDto | null>(null)
   const [aiProviderConfigs, setAiProviderConfigs] = useState<AiProviderConfigDto[]>([])
+  const [aiParseMode, setAiParseMode] = useState<'skill' | 'mcp' | null>(null)
+  const [aiParseBusy, setAiParseBusy] = useState(false)
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -447,6 +451,10 @@ function App() {
     setMcpBusy(true)
     try {
       const saved = await invokeTauri<McpServerDto>('upsert_mcp_server', { server })
+      const targetTools = saved.targets.map((target) => target.tool)
+      if (targetTools.length) {
+        await invokeTauri('sync_mcp_server', { serverId: saved.id, tools: targetTools })
+      }
       await loadMcpServers()
       toast.success(t('mcp.saved'))
       return saved
@@ -503,19 +511,6 @@ function App() {
       if (raw.startsWith('MCP_TARGET_CONFLICT|')) throw err
       toast.error(err instanceof Error ? err.message : String(err))
       throw err
-    } finally {
-      setMcpBusy(false)
-    }
-  }, [invokeTauri, loadMcpServers, t])
-
-  const repairLocalMcpServer = useCallback(async (serverId: string) => {
-    setMcpBusy(true)
-    try {
-      await invokeTauri<McpServerDto>('repair_local_mcp_server', { serverId })
-      await loadMcpServers()
-      toast.success(t('mcp.repairedLocal'))
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
     } finally {
       setMcpBusy(false)
     }
@@ -1317,6 +1312,51 @@ function App() {
       setError(err instanceof Error ? err.message : String(err))
     }
   }, [invokeTauri, isTauri, loadAiProviderConfigs])
+  const handleAiProviderTest = useCallback(async (provider: AiProviderId) => {
+    if (!isTauri) return
+    try {
+      await invokeTauri('test_ai_provider_connection', { provider })
+      toast.success(t('aiSettings.testPassed'), { duration: 1600 })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, isTauri, t])
+  const parseAiSource = useCallback(async (provider: AiProviderId, sourceUrl: string) => {
+    setAiParseBusy(true)
+    try {
+      return await invokeTauri<AiParsePlanDto>('parse_ai_source', { provider, sourceUrl })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+      return null
+    } finally {
+      setAiParseBusy(false)
+    }
+  }, [invokeTauri])
+  const applyAiPlan = useCallback(async (plan: AiParsePlanDto) => {
+    if (plan.kind === 'skill' && plan.skill_plan) {
+      setGitUrl(plan.skill_plan.source_url)
+      setAddModalTab('git')
+      setShowAddModal(true)
+      setAiParseMode(null)
+      toast.success(t('aiParse.skillReady'))
+      return
+    }
+    if (plan.kind === 'mcp' && plan.mcp_plan) {
+      const mcp = plan.mcp_plan
+      const references = new Set<string>()
+      for (const value of [...Object.values(mcp.env), ...Object.values(mcp.headers)]) {
+        const match = value.match(/^\$\{([A-Z0-9_]+)\}$/)
+        if (match) references.add(match[1])
+      }
+      const saved = await saveMcpServer({ id: '', name: mcp.name, transport: mcp.transport, command: mcp.command ?? '', args: mcp.args, env: mcp.env, cwd: mcp.cwd ?? null, url: mcp.url ?? '', headers: mcp.headers, enabled: true, proxy_enabled: true, source_url: plan.source.url, source_path: plan.source.path ?? null, secret_refs: [...references].map((env_var) => ({ env_var, has_value: false })), targets: [] })
+      if (saved && mcp.recommended_targets.length) await setMcpServerTargets(saved.id, mcp.recommended_targets)
+      if (saved) {
+        setAiParseMode(null)
+        setActiveView('mcp')
+        toast.success(t('mcp.saved'))
+      }
+    }
+  }, [saveMcpServer, setMcpServerTargets, t])
   const handleToolConfigChange = useCallback(
     async (nextConfig: ToolConfigDto) => {
       setToolConfig(nextConfig)
@@ -3828,14 +3868,13 @@ function App() {
             onDelete={deleteMcpServer}
             onSync={syncMcpServer}
             onSetTargets={setMcpServerTargets}
-            onRepairLocal={repairLocalMcpServer}
             onScanLocal={() => void scanLocalMcpConfigs()}
             onOpenImport={() => setActiveView('mcp-add')}
             onCloseManualEditor={() => setActiveView('mcp')}
             t={t}
           />
         ) : activeView === 'mcp-add' ? (
-          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp-manual')} t={t} />
+          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp-manual')} onOpenAiParse={() => setAiParseMode('mcp')} t={t} />
         ) : activeView === 'manage' ? (
           <div className="management-page">
             <div className="management-header">
@@ -3929,6 +3968,7 @@ function App() {
             onAiProviderConfigSave={handleAiProviderConfigSave}
             onAiProviderApiKeySet={handleAiProviderApiKeySet}
             onAiProviderApiKeyDelete={handleAiProviderApiKeyDelete}
+            onAiProviderTest={handleAiProviderTest}
             onBack={handleCloseSettings}
             t={t}
           />
@@ -3975,6 +4015,19 @@ function App() {
         onInstallProjectsChange={handleInstallProjectsChange}
         onPickProject={handlePickProject}
         onSubmit={addModalTab === 'local' ? handleCreateLocal : handleCreateGit}
+        onOpenAiParse={() => setAiParseMode('skill')}
+        t={t}
+      />
+
+      <AiParseModal
+        key={aiParseMode ?? 'closed'}
+        open={aiParseMode !== null}
+        mode={aiParseMode ?? 'skill'}
+        busy={aiParseBusy || mcpBusy || loading}
+        providers={aiProviderConfigs}
+        onClose={() => setAiParseMode(null)}
+        onParse={parseAiSource}
+        onConfirm={(plan) => { void applyAiPlan(plan) }}
         t={t}
       />
 
