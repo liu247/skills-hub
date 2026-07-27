@@ -241,6 +241,16 @@ export type GithubProxyConfigDto = {
   auto_detected: boolean
 }
 
+export type AiProviderId = 'openai' | 'deepseek' | 'kimi'
+
+export type AiProviderConfigDto = {
+  provider: AiProviderId
+  enabled: boolean
+  model: string
+  base_url: string
+  has_api_key: boolean
+}
+
 export type AutoUpdateSkillProgressDto = {
   skill_id: string
   name: string

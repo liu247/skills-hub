@@ -4,6 +4,10 @@ use tauri::State;
 
 use std::sync::Arc;
 
+use crate::core::ai_parser::{
+    delete_provider_api_key, get_provider_configs, save_provider_config, set_provider_api_key,
+    AiProvider, AiProviderConfig, AiProviderConfigStatus,
+};
 use crate::core::auto_update::{
     get_auto_update_config as get_auto_update_config_core, record_auto_update_triggered,
     run_auto_update_now as run_auto_update_now_core,
@@ -2128,6 +2132,49 @@ pub async fn set_github_token(store: State<'_, SkillStore>, token: String) -> Re
             store.set_setting("github_token", trimmed)?;
         }
         Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn get_ai_provider_configs(
+    store: State<'_, SkillStore>,
+) -> Result<Vec<AiProviderConfigStatus>, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || get_provider_configs(&store, &OsCredentialStore))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn set_ai_provider_config(
+    store: State<'_, SkillStore>,
+    config: AiProviderConfig,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || save_provider_config(&store, config))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn set_ai_provider_api_key(provider: AiProvider, value: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        set_provider_api_key(&OsCredentialStore, provider, &value)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+pub async fn delete_ai_provider_api_key(provider: AiProvider) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_provider_api_key(&OsCredentialStore, provider)
     })
     .await
     .map_err(|err| err.to_string())?

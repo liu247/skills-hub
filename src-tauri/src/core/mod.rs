@@ -1,3 +1,4 @@
+pub mod ai_parser;
 pub mod auto_update;
 pub mod cache_cleanup;
 pub mod cancel_token;
@@ -47,3 +48,7 @@ mod mcp_bridge_tests;
 #[cfg(test)]
 #[path = "tests/mcp_adapters.rs"]
 mod mcp_adapters_tests;
+
+#[cfg(test)]
+#[path = "tests/ai_parser.rs"]
+mod ai_parser_tests;

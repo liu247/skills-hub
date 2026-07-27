@@ -5,6 +5,8 @@ import type { TFunction } from 'i18next'
 import type { DownloadOptions, Update } from '@tauri-apps/plugin-updater'
 import { toast } from 'sonner'
 import type { GithubProxyConfigDto } from './types'
+import type { AiProviderConfigDto } from './types'
+import AiProviderSettings from './AiProviderSettings'
 
 const PROJECT_REPOSITORY_URL = 'https://github.com/qufei1993/skills-hub'
 
@@ -29,6 +31,7 @@ type SettingsPageProps = {
   themePreference: 'system' | 'light' | 'dark'
   githubToken: string
   githubProxyConfig: GithubProxyConfigDto
+  aiProviderConfigs: AiProviderConfigDto[]
   onPickStoragePath: () => void
   onToggleLanguage: () => void
   onThemeChange: (nextTheme: 'system' | 'light' | 'dark') => void
@@ -37,6 +40,9 @@ type SettingsPageProps = {
   onClearGitCacheNow: () => void
   onGithubTokenChange: (token: string) => void
   onGithubProxyConfigChange: (enabled: boolean, port: number) => void
+  onAiProviderConfigSave: (config: Omit<AiProviderConfigDto, 'has_api_key'>) => void
+  onAiProviderApiKeySet: (provider: AiProviderConfigDto['provider'], value: string) => void
+  onAiProviderApiKeyDelete: (provider: AiProviderConfigDto['provider']) => void
   onBack: () => void
   t: TFunction
 }
@@ -58,6 +64,10 @@ const SettingsPage = ({
   onGithubTokenChange,
   githubProxyConfig,
   onGithubProxyConfigChange,
+  aiProviderConfigs,
+  onAiProviderConfigSave,
+  onAiProviderApiKeySet,
+  onAiProviderApiKeyDelete,
   onBack,
   t,
 }: SettingsPageProps) => {
@@ -271,6 +281,14 @@ const SettingsPage = ({
                 </div>
               </div>
             </section>
+
+            <AiProviderSettings
+              providers={aiProviderConfigs}
+              onSave={onAiProviderConfigSave}
+              onSetApiKey={onAiProviderApiKeySet}
+              onDeleteApiKey={onAiProviderApiKeyDelete}
+              t={t}
+            />
 
             <section className="settings-card">
             <div className="settings-card-head">

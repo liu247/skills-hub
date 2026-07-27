@@ -63,6 +63,8 @@ import {
 } from './components/skills/collectionWorkspace'
 import type {
   AutoUpdateConfigDto,
+  AiProviderConfigDto,
+  AiProviderId,
   CollectionDto,
   FeaturedSkillDto,
   GitSkillCandidate,
@@ -217,6 +219,7 @@ function App() {
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
   const [localMcpPlan, setLocalMcpPlan] = useState<LocalMcpPlanDto | null>(null)
+  const [aiProviderConfigs, setAiProviderConfigs] = useState<AiProviderConfigDto[]>([])
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -689,6 +692,19 @@ function App() {
       .then((token) => setGithubToken(token))
       .catch(() => {})
   }, [isTauri, invokeTauri])
+
+  const loadAiProviderConfigs = useCallback(async () => {
+    if (!isTauri) return
+    try {
+      setAiProviderConfigs(await invokeTauri<AiProviderConfigDto[]>('get_ai_provider_configs'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, isTauri])
+
+  useEffect(() => {
+    void loadAiProviderConfigs()
+  }, [loadAiProviderConfigs])
 
   useEffect(() => {
     if (!isTauri) return
@@ -1273,6 +1289,34 @@ function App() {
     },
     [invokeTauri, isTauri],
   )
+  const handleAiProviderConfigSave = useCallback(async (config: Omit<AiProviderConfigDto, 'has_api_key'>) => {
+    if (!isTauri) return
+    try {
+      await invokeTauri('set_ai_provider_config', { config })
+      await loadAiProviderConfigs()
+      toast.success(t('aiSettings.saved'), { duration: 1600 })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, isTauri, loadAiProviderConfigs, t])
+  const handleAiProviderApiKeySet = useCallback(async (provider: AiProviderId, value: string) => {
+    if (!isTauri) return
+    try {
+      await invokeTauri('set_ai_provider_api_key', { provider, value })
+      await loadAiProviderConfigs()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, isTauri, loadAiProviderConfigs])
+  const handleAiProviderApiKeyDelete = useCallback(async (provider: AiProviderId) => {
+    if (!isTauri) return
+    try {
+      await invokeTauri('delete_ai_provider_api_key', { provider })
+      await loadAiProviderConfigs()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, isTauri, loadAiProviderConfigs])
   const handleToolConfigChange = useCallback(
     async (nextConfig: ToolConfigDto) => {
       setToolConfig(nextConfig)
@@ -3881,6 +3925,10 @@ function App() {
             onGithubTokenChange={handleGithubTokenChange}
             githubProxyConfig={githubProxyConfig}
             onGithubProxyConfigChange={handleGithubProxyConfigChange}
+            aiProviderConfigs={aiProviderConfigs}
+            onAiProviderConfigSave={handleAiProviderConfigSave}
+            onAiProviderApiKeySet={handleAiProviderApiKeySet}
+            onAiProviderApiKeyDelete={handleAiProviderApiKeyDelete}
             onBack={handleCloseSettings}
             t={t}
           />
