@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Skills Hub",
   "mainBinaryName": "app",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "identifier": "com.qufei1993.skillshub",
   "build": {
     "frontendDist": "../dist",
