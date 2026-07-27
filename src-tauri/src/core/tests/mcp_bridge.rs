@@ -1,7 +1,51 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use crate::core::credential_store::{CredentialStore, MemoryCredentialStore};
-use crate::core::mcp_bridge::{resolve_bridge_environment, resolve_bridge_values};
+use crate::core::mcp_bridge::{
+    resolve_bridge_environment, resolve_bridge_values, CachedCredentialStore,
+};
+use anyhow::Result;
+
+struct CountingCredentialStore {
+    reads: AtomicUsize,
+}
+
+struct SlowCredentialStore {
+    reads: AtomicUsize,
+}
+
+impl CredentialStore for SlowCredentialStore {
+    fn set(&self, _server_id: &str, _env_var: &str, _value: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn get(&self, _server_id: &str, _env_var: &str) -> Result<Option<String>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        Ok(Some("secret-value".into()))
+    }
+
+    fn delete(&self, _server_id: &str, _env_var: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl CredentialStore for CountingCredentialStore {
+    fn set(&self, _server_id: &str, _env_var: &str, _value: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn get(&self, _server_id: &str, _env_var: &str) -> Result<Option<String>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        Ok(Some("secret-value".into()))
+    }
+
+    fn delete(&self, _server_id: &str, _env_var: &str) -> Result<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn bridge_resolves_references_without_returning_the_reference_literal() {
@@ -68,4 +112,41 @@ fn bridge_resolves_header_reference_by_credential_name() {
     .unwrap();
 
     assert_eq!(values["Authorization"], "secret-value");
+}
+
+#[test]
+fn credential_agent_cache_reads_each_keychain_entry_once_per_session() {
+    let store = CachedCredentialStore::new(CountingCredentialStore {
+        reads: AtomicUsize::new(0),
+    });
+
+    assert_eq!(
+        store.get("tavily", "TAVILY_API_KEY").unwrap().as_deref(),
+        Some("secret-value")
+    );
+    assert_eq!(
+        store.get("tavily", "TAVILY_API_KEY").unwrap().as_deref(),
+        Some("secret-value")
+    );
+
+    assert_eq!(store.inner().reads.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn credential_agent_cache_deduplicates_concurrent_keychain_reads() {
+    let store = Arc::new(CachedCredentialStore::new(SlowCredentialStore {
+        reads: AtomicUsize::new(0),
+    }));
+    let first = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.get("tavily", "TAVILY_API_KEY").unwrap())
+    };
+    let second = {
+        let store = Arc::clone(&store);
+        std::thread::spawn(move || store.get("tavily", "TAVILY_API_KEY").unwrap())
+    };
+
+    assert_eq!(first.join().unwrap().as_deref(), Some("secret-value"));
+    assert_eq!(second.join().unwrap().as_deref(), Some("secret-value"));
+    assert_eq!(store.inner().reads.load(Ordering::SeqCst), 1);
 }
