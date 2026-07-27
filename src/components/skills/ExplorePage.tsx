@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, FolderKanban, Plus, Search, Star } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, FolderKanban, Plus, Search, Star } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import type { FeaturedSkillDto, ManagedSkill, OnlineSkillDto } from './types'
 
@@ -14,6 +14,7 @@ type ExplorePageProps = {
   onExploreFilterChange: (value: string) => void
   onInstallSkill: (sourceUrl: string, skillName?: string) => void
   onOpenManualAdd: (tab?: 'git' | 'local') => void
+  onOpenAiParse: () => void
   t: TFunction
 }
 
@@ -156,6 +157,7 @@ const ExplorePage = ({
   onExploreFilterChange,
   onInstallSkill,
   onOpenManualAdd,
+  onOpenAiParse,
   t,
 }: ExplorePageProps) => {
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set())
@@ -234,6 +236,15 @@ const ExplorePage = ({
               onChange={(e) => onExploreFilterChange(e.target.value)}
             />
           </div>
+          <button
+            className="btn btn-secondary explore-manual-btn"
+            type="button"
+            onClick={onOpenAiParse}
+            disabled={loading}
+          >
+            <Bot size={15} />
+            {t('aiParse.open')}
+          </button>
           <button
             className="btn btn-secondary explore-manual-btn"
             type="button"

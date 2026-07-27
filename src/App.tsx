@@ -3984,6 +3984,7 @@ function App() {
             onExploreFilterChange={handleExploreFilterChange}
             onInstallSkill={handleExploreInstall}
             onOpenManualAdd={handleOpenAdd}
+            onOpenAiParse={() => setAiParseMode('skill')}
             t={t}
           />
         )}
