@@ -3,7 +3,9 @@ pub mod core;
 
 use std::sync::Arc;
 
+use core::ai_parser::migrate_credentials_to_local_store;
 use core::cancel_token::CancelToken;
+use core::credential_store::OsCredentialStore;
 use core::skill_store::{default_db_path, migrate_legacy_db_if_needed, SkillStore};
 use tauri::Manager;
 use tauri_plugin_log::{Target, TargetKind};
@@ -13,6 +15,7 @@ fn init_store<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> anyhow::Result<Sk
     migrate_legacy_db_if_needed(&db_path)?;
     let store = SkillStore::new(db_path);
     store.ensure_schema()?;
+    migrate_credentials_to_local_store(&store, &OsCredentialStore)?;
     Ok(store)
 }
 

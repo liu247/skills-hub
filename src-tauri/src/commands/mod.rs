@@ -25,7 +25,7 @@ use crate::core::cache_cleanup::{
 use crate::core::cancel_token::CancelToken;
 use crate::core::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use crate::core::content_hash::hash_dir;
-use crate::core::credential_store::{CredentialStore, OsCredentialStore};
+use crate::core::credential_store::{CredentialStore, LocalCredentialStore};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
@@ -139,7 +139,7 @@ fn string_map_to_json_map(
 }
 
 fn to_mcp_dto(store: &SkillStore, record: McpServerRecord) -> anyhow::Result<McpServerDto> {
-    let credentials = OsCredentialStore;
+    let credentials = LocalCredentialStore::from_store(store)?;
     let secret_refs = store
         .list_mcp_secret_refs(&record.id)?
         .into_iter()
@@ -443,7 +443,8 @@ pub async fn get_tool_config(store: State<'_, SkillStore>) -> Result<ToolConfigD
 pub async fn get_mcp_servers(store: State<'_, SkillStore>) -> Result<Vec<McpServerDto>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        repair_legacy_local_mcp_records(&store, &OsCredentialStore)?;
+        let credentials = LocalCredentialStore::from_store(&store)?;
+        repair_legacy_local_mcp_records(&store, &credentials)?;
         store
             .list_mcp_servers()?
             .into_iter()
@@ -499,6 +500,7 @@ pub async fn import_local_mcp_selection(
 ) -> Result<Vec<McpServerDto>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let credentials = LocalCredentialStore::from_store(&store)?;
         let home = dirs::home_dir().context("resolve user home directory for MCP import")?;
         let discovery = without_managed_targets(
             scan_local_mcp_configs_with_secrets_in(&home)?,
@@ -533,7 +535,7 @@ pub async fn import_local_mcp_selection(
             if let Err(err) = (|| -> anyhow::Result<()> {
                 store.replace_mcp_secret_refs(&record.id, &refs)?;
                 for (name, value) in &selected.literal_credentials {
-                    OsCredentialStore.set(&record.id, name, value)?;
+                    credentials.set(&record.id, name, value)?;
                 }
                 sync_local_selection(
                     &store,
@@ -544,7 +546,7 @@ pub async fn import_local_mcp_selection(
                 Ok(())
             })() {
                 for name in selected.literal_credentials.keys() {
-                    let _ = OsCredentialStore.delete(&record.id, name);
+                    let _ = credentials.delete(&record.id, name);
                 }
                 let _ = store.delete_mcp_server(&record.id);
                 return Err(err);
@@ -731,12 +733,14 @@ pub async fn upsert_mcp_server(
 
 #[tauri::command]
 pub async fn set_mcp_secret(
+    store: State<'_, SkillStore>,
     server_id: String,
     env_var: String,
     value: String,
 ) -> Result<(), String> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        OsCredentialStore.set(&server_id, &env_var, &value)
+        LocalCredentialStore::from_store(&store)?.set(&server_id, &env_var, &value)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -744,11 +748,18 @@ pub async fn set_mcp_secret(
 }
 
 #[tauri::command]
-pub async fn delete_mcp_secret(server_id: String, env_var: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || OsCredentialStore.delete(&server_id, &env_var))
-        .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+pub async fn delete_mcp_secret(
+    store: State<'_, SkillStore>,
+    server_id: String,
+    env_var: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        LocalCredentialStore::from_store(&store)?.delete(&server_id, &env_var)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]
@@ -770,12 +781,13 @@ pub async fn repair_local_mcp_server(
 ) -> Result<McpServerDto, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let credentials = LocalCredentialStore::from_store(&store)?;
         let current = store
             .list_mcp_servers()?
             .into_iter()
             .find(|server| server.id == server_id)
             .context("MCP server not found")?;
-        let repaired = repair_local_mcp_record(&store, &OsCredentialStore, current)?;
+        let repaired = repair_local_mcp_record(&store, &credentials, current)?;
         to_mcp_dto(&store, repaired)
     })
     .await
@@ -2144,10 +2156,12 @@ pub async fn get_ai_provider_configs(
     store: State<'_, SkillStore>,
 ) -> Result<Vec<AiProviderConfigStatus>, String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || get_provider_configs(&store, &OsCredentialStore))
-        .await
-        .map_err(|err| err.to_string())?
-        .map_err(format_anyhow_error)
+    tauri::async_runtime::spawn_blocking(move || {
+        get_provider_configs(&store, &LocalCredentialStore::from_store(&store)?)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
 }
 
 #[tauri::command]
@@ -2163,9 +2177,14 @@ pub async fn set_ai_provider_config(
 }
 
 #[tauri::command]
-pub async fn set_ai_provider_api_key(provider: AiProvider, value: String) -> Result<(), String> {
+pub async fn set_ai_provider_api_key(
+    store: State<'_, SkillStore>,
+    provider: AiProvider,
+    value: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        set_provider_api_key(&OsCredentialStore, provider, &value)
+        set_provider_api_key(&LocalCredentialStore::from_store(&store)?, provider, &value)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2173,9 +2192,13 @@ pub async fn set_ai_provider_api_key(provider: AiProvider, value: String) -> Res
 }
 
 #[tauri::command]
-pub async fn delete_ai_provider_api_key(provider: AiProvider) -> Result<(), String> {
+pub async fn delete_ai_provider_api_key(
+    store: State<'_, SkillStore>,
+    provider: AiProvider,
+) -> Result<(), String> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        delete_provider_api_key(&OsCredentialStore, provider)
+        delete_provider_api_key(&LocalCredentialStore::from_store(&store)?, provider)
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2191,7 +2214,12 @@ pub async fn parse_ai_source(
 ) -> Result<AiParsePlan, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        parse_source_with_ai(&store, &OsCredentialStore, provider, &sourceUrl)
+        parse_source_with_ai(
+            &store,
+            &LocalCredentialStore::from_store(&store)?,
+            provider,
+            &sourceUrl,
+        )
     })
     .await
     .map_err(|err| err.to_string())?
@@ -2205,7 +2233,7 @@ pub async fn test_ai_provider_connection(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        test_provider_connection(&store, &OsCredentialStore, provider)
+        test_provider_connection(&store, &LocalCredentialStore::from_store(&store)?, provider)
     })
     .await
     .map_err(|err| err.to_string())?

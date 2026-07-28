@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::credential_store::CredentialStore;
+use super::credential_store::{CredentialStore, LocalCredentialStore};
 use super::mcp::{
     credential_name_from_reference, is_credential_name, validate_mcp_server_input, McpServerInput,
     McpTransport,
@@ -84,6 +84,44 @@ pub struct AiProviderConfigStatus {
 
 fn setting_key(provider: AiProvider) -> String {
     format!("{AI_PROVIDER_SETTING_PREFIX}{}", provider.key())
+}
+
+pub fn migrate_credentials_to_local_store(
+    store: &SkillStore,
+    legacy: &dyn CredentialStore,
+) -> Result<()> {
+    let local = LocalCredentialStore::from_store(store)?;
+    let mut entries = AiProvider::ALL
+        .into_iter()
+        .map(|provider| (AI_CREDENTIAL_OWNER.to_string(), provider.key().to_string()))
+        .collect::<Vec<_>>();
+    for server in store.list_mcp_servers()? {
+        entries.extend(
+            store
+                .list_mcp_secret_refs(&server.id)?
+                .into_iter()
+                .map(|reference| (reference.mcp_server_id, reference.env_var)),
+        );
+    }
+    for (owner, name) in entries {
+        if local.get(&owner, &name)?.is_some() {
+            continue;
+        }
+        let value = match legacy.get(&owner, &name) {
+            Ok(value) => value,
+            Err(error) => {
+                log::warn!("skip unavailable legacy credential {owner}/{name}: {error:#}");
+                None
+            }
+        };
+        if let Some(value) = value {
+            local.set(&owner, &name, &value)?;
+            if let Err(error) = legacy.delete(&owner, &name) {
+                log::warn!("remove legacy credential {owner}/{name}: {error:#}");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn get_provider_config(store: &SkillStore, provider: AiProvider) -> Result<AiProviderConfig> {

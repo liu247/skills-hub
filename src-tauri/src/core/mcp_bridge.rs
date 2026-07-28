@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
-use super::credential_store::{CredentialStore, OsCredentialStore};
+use super::credential_store::{CredentialStore, LocalCredentialStore};
 use super::mcp::credential_name_from_reference;
 use super::skill_store::SkillStore;
 
@@ -168,7 +168,8 @@ fn run_stdio_bridge_direct(
                 .context("MCP environment reference must be a string")
         })
         .collect::<Result<_>>()?;
-    let environment = resolve_bridge_environment(&OsCredentialStore, &server.id, &references)?;
+    let credentials = LocalCredentialStore::from_store(&store)?;
+    let environment = resolve_bridge_environment(&credentials, &server.id, &references)?;
     let status = std::process::Command::new(command)
         .args(command_args)
         .envs(environment)
@@ -200,7 +201,9 @@ pub fn run_credential_agent_cli(arguments: impl IntoIterator<Item = String>) -> 
     let listener = UnixListener::bind(&socket_path).context("bind MCP credential agent socket")?;
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
         .context("secure MCP credential agent socket")?;
-    let credentials = Arc::new(CachedCredentialStore::new(OsCredentialStore));
+    let credentials = Arc::new(CachedCredentialStore::new(
+        LocalCredentialStore::from_store(&SkillStore::new(db_path.clone()))?,
+    ));
     for connection in listener.incoming() {
         let stream = match connection {
             Ok(stream) => stream,
@@ -282,7 +285,7 @@ fn credential_agent_socket_path(db_path: &std::path::Path) -> PathBuf {
 fn handle_agent_connection(
     mut stream: UnixStream,
     db_path: PathBuf,
-    credentials: Arc<CachedCredentialStore<OsCredentialStore>>,
+    credentials: Arc<CachedCredentialStore<LocalCredentialStore>>,
 ) -> Result<()> {
     let server_id = read_agent_server_id(&mut stream)?;
     let store = SkillStore::new(db_path);
@@ -372,8 +375,9 @@ fn run_http_bridge(mut args: impl Iterator<Item = String>) -> Result<()> {
         anyhow::bail!("MCP server is not an HTTP server");
     }
     let upstream = server.url.context("HTTP server URL is required")?;
+    let credentials = LocalCredentialStore::from_store(&store)?;
     let headers = resolve_bridge_values(
-        &OsCredentialStore,
+        &credentials,
         &server.id,
         &server
             .headers
