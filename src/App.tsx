@@ -40,6 +40,7 @@ import McpPage from './components/skills/McpPage'
 import McpImportPage from './components/skills/McpImportPage'
 import McpDiscoveryModal from './components/skills/modals/McpDiscoveryModal'
 import AiParseModal from './components/skills/modals/AiParseModal'
+import CollectionParametersModal from './components/skills/modals/CollectionParametersModal'
 import UpdatesPage from './components/skills/UpdatesPage'
 import WindowResizeHandles from './components/WindowResizeHandles'
 import {
@@ -68,6 +69,7 @@ import type {
   AiProviderId,
   AiParsePlanDto,
   CollectionDto,
+  CollectionParameterDto,
   FeaturedSkillDto,
   GitSkillCandidate,
   GithubProxyConfigDto,
@@ -193,6 +195,8 @@ function App() {
   const [collections, setCollections] = useState<CollectionDto[]>([])
   const [collectionView, setCollectionView] = useState<CollectionView>('series')
   const [activeCollection, setActiveCollection] = useState<string | null>(null)
+  const [parameterCollection, setParameterCollection] = useState<string | null>(null)
+  const [collectionParameters, setCollectionParameters] = useState<CollectionParameterDto[]>([])
   const [tagEditorSkill, setTagEditorSkill] = useState<ManagedSkill | null>(null)
   const [pendingDeleteTag, setPendingDeleteTag] = useState<TagWithCountDto | null>(null)
   const [addModalTab, setAddModalTab] = useState<'local' | 'git'>('git')
@@ -224,6 +228,7 @@ function App() {
   const [aiProviderConfigs, setAiProviderConfigs] = useState<AiProviderConfigDto[]>([])
   const [aiParseMode, setAiParseMode] = useState<'skill' | 'mcp' | null>(null)
   const [aiParseBusy, setAiParseBusy] = useState(false)
+  const [pendingAiParameters, setPendingAiParameters] = useState<NonNullable<AiParsePlanDto['skill_plan']>['parameters']>([])
 
   const isTauri =
     typeof window !== 'undefined' &&
@@ -1321,10 +1326,10 @@ function App() {
       toast.error(err instanceof Error ? err.message : String(err))
     }
   }, [invokeTauri, isTauri, t])
-  const parseAiSource = useCallback(async (provider: AiProviderId, sourceUrl: string) => {
+  const parseAiSource = useCallback(async (provider: AiProviderId, sourceUrl: string, expectedKind: 'skill' | 'mcp') => {
     setAiParseBusy(true)
     try {
-      return await invokeTauri<AiParsePlanDto>('parse_ai_source', { provider, sourceUrl })
+      return await invokeTauri<AiParsePlanDto>('parse_ai_source', { provider, sourceUrl, expectedKind })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
       return null
@@ -1335,6 +1340,7 @@ function App() {
   const applyAiPlan = useCallback(async (plan: AiParsePlanDto) => {
     if (plan.kind === 'skill' && plan.skill_plan) {
       setGitUrl(plan.skill_plan.source_url)
+      setPendingAiParameters(plan.skill_plan.parameters ?? [])
       setAddModalTab('git')
       setShowAddModal(true)
       setAiParseMode(null)
@@ -1357,6 +1363,12 @@ function App() {
       }
     }
   }, [saveMcpServer, setMcpServerTargets, t])
+
+  const applyPendingAiParameters = useCallback(async (skillId: string) => {
+    if (!pendingAiParameters?.length) return
+    await invokeTauri('apply_ai_skill_parameters', { skillId, parameters: pendingAiParameters })
+    setPendingAiParameters([])
+  }, [invokeTauri, pendingAiParameters])
   const handleToolConfigChange = useCallback(
     async (nextConfig: ToolConfigDto) => {
       setToolConfig(nextConfig)
@@ -1620,16 +1632,40 @@ function App() {
     setCollectionView('series')
   }, [])
 
-  const handleRenameCollection = useCallback(async (oldName: string, newName: string) => {
+  const handleConfigureCollection = useCallback(async (name: string) => {
     try {
-      await invokeTauri('rename_collection', { oldName, newName })
-      if (activeCollection === oldName) setActiveCollection(newName)
-      await loadManagedSkills()
-      await loadCollections()
+      setParameterCollection(name)
+      setCollectionParameters(await invokeTauri<CollectionParameterDto[]>('get_collection_parameters', { collectionName: name }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+      setParameterCollection(null)
+    }
+  }, [invokeTauri])
+
+  const handleSaveCollectionParameter = useCallback(async (parameter: CollectionParameterDto, secretValue?: string) => {
+    if (!parameterCollection) return
+    try {
+      const parameters = await invokeTauri<CollectionParameterDto[]>('save_collection_parameter', {
+        collectionName: parameterCollection,
+        parameter,
+        secretValue: secretValue ?? null,
+      })
+      setCollectionParameters(parameters)
+      toast.success(t('collectionParameters.saved'))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     }
-  }, [activeCollection, invokeTauri, loadCollections, loadManagedSkills])
+  }, [invokeTauri, parameterCollection, t])
+
+  const handleDeleteCollectionParameter = useCallback(async (name: string) => {
+    if (!parameterCollection) return
+    try {
+      await invokeTauri('delete_collection_parameter', { collectionName: parameterCollection, name })
+      setCollectionParameters(await invokeTauri<CollectionParameterDto[]>('get_collection_parameters', { collectionName: parameterCollection }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }, [invokeTauri, parameterCollection])
 
   const handleClearCollection = useCallback(async (name: string) => {
     try {
@@ -2782,6 +2818,7 @@ function App() {
           },
         )
         await applySelectedAddModalTags(created.skill_id, created.name)
+        await applyPendingAiParameters(created.skill_id)
         const syncErrors = await syncInstalledSkill(created)
         if (syncErrors.length > 0) showActionErrors(syncErrors)
         setLocalPath('')
@@ -2859,6 +2896,7 @@ function App() {
           },
         )
         await applySelectedAddModalTags(created.skill_id, created.name)
+        await applyPendingAiParameters(created.skill_id)
         const syncErrors = await syncInstalledSkill(created)
         if (syncErrors.length > 0) showActionErrors(syncErrors)
       } else {
@@ -2883,6 +2921,7 @@ function App() {
             },
           )
           await applySelectedAddModalTags(created.skill_id, created.name)
+          await applyPendingAiParameters(created.skill_id)
           const syncErrors = await syncInstalledSkill(created)
           if (syncErrors.length > 0) showActionErrors(syncErrors)
         } else if (autoSelectSkillName) {
@@ -2912,6 +2951,7 @@ function App() {
               },
             )
             await applySelectedAddModalTags(created.skill_id, created.name)
+            await applyPendingAiParameters(created.skill_id)
             const syncErrors = await syncInstalledSkill(created)
             if (syncErrors.length > 0) showActionErrors(syncErrors)
           } else {
@@ -3048,6 +3088,7 @@ function App() {
             },
           )
           await applySelectedAddModalTags(created.skill_id, created.name)
+          await applyPendingAiParameters(created.skill_id)
           const syncErrors = await syncInstalledSkill(created)
           collectedErrors.push(...syncErrors)
         } catch (err) {
@@ -3119,6 +3160,7 @@ function App() {
             },
           )
           await applySelectedAddModalTags(created.skill_id, created.name)
+          await applyPendingAiParameters(created.skill_id)
           const syncErrors = await syncInstalledSkill(created)
           collectedErrors.push(...syncErrors)
         } catch (err) {
@@ -3759,7 +3801,7 @@ function App() {
                 uncategorizedCount={uncategorizedCount}
                 formatRelative={formatRelative}
                 onOpenCollection={handleOpenCollection}
-                onRenameCollection={handleRenameCollection}
+                onConfigureCollection={handleConfigureCollection}
                 onClearCollection={handleClearCollection}
                 t={t}
               />
@@ -4229,6 +4271,16 @@ function App() {
           t={t}
         />
       ) : null}
+
+      <CollectionParametersModal
+        open={Boolean(parameterCollection)}
+        collectionName={parameterCollection}
+        parameters={collectionParameters}
+        onClose={() => setParameterCollection(null)}
+        onSave={handleSaveCollectionParameter}
+        onDelete={handleDeleteCollectionParameter}
+        t={t}
+      />
 
       {showAppUpdateModal && updateAvailableVersion && (
         <div className="modal-backdrop" onClick={updateInstalling ? undefined : handleDismissUpdate}>

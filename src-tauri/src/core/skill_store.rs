@@ -8,7 +8,7 @@ const DB_FILE_NAME: &str = "skills_hub.db";
 const LEGACY_APP_IDENTIFIERS: &[&str] = &["com.tauri.dev", "com.tauri.dev.skillshub"];
 
 // Schema versioning: bump when making changes and add a migration step.
-const SCHEMA_VERSION: i32 = 9;
+const SCHEMA_VERSION: i32 = 10;
 
 // Minimal schema for MVP: skills, skill_targets, settings, discovered_skills(optional).
 const SCHEMA_V1: &str = r#"
@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS discovered_skills (
 CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
 CREATE INDEX IF NOT EXISTS idx_skills_updated_at ON skills(updated_at);
 CREATE INDEX IF NOT EXISTS idx_skills_collection ON skills(collection);
+
+CREATE TABLE IF NOT EXISTS collection_parameters (
+  collection_name TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  is_sensitive INTEGER NOT NULL DEFAULT 0,
+  plain_value TEXT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (collection_name, name)
+);
 
 CREATE TABLE IF NOT EXISTS skill_tags (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,6 +160,15 @@ pub struct CollectionRecord {
     pub name: String,
     pub skill_count: i64,
     pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionParameterRecord {
+    pub collection_name: String,
+    pub name: String,
+    pub description: String,
+    pub is_sensitive: bool,
+    pub plain_value: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -307,6 +327,9 @@ impl SkillStore {
                     migrate_mcp_to_v8(conn)?;
                     migrate_mcp_to_v9(conn)?;
                 }
+                if user_version < 10 {
+                    migrate_collection_parameters_to_v10(conn)?;
+                }
                 conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             } else if user_version > SCHEMA_VERSION {
                 anyhow::bail!(
@@ -320,6 +343,7 @@ impl SkillStore {
             // the MCP tables. The migration is idempotent, so always repair that state.
             migrate_mcp_to_v8(conn)?;
             migrate_mcp_to_v9(conn)?;
+            migrate_collection_parameters_to_v10(conn)?;
 
             Ok(())
         })
@@ -641,6 +665,69 @@ impl SkillStore {
                 items.push(row?);
             }
             Ok(items)
+        })
+    }
+
+    pub fn list_collection_parameters(
+        &self,
+        collection_name: &str,
+    ) -> Result<Vec<CollectionParameterRecord>> {
+        let collection_name = normalize_collection_name(collection_name)?;
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT collection_name, name, description, is_sensitive, plain_value
+                 FROM collection_parameters WHERE collection_name = ?1 ORDER BY name COLLATE NOCASE",
+            )?;
+            let rows = statement.query_map(params![collection_name], |row| {
+                Ok(CollectionParameterRecord {
+                    collection_name: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    is_sensitive: row.get::<_, i32>(3)? != 0,
+                    plain_value: row.get(4)?,
+                })
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+        })
+    }
+
+    pub fn upsert_collection_parameter(
+        &self,
+        collection_name: &str,
+        name: &str,
+        description: &str,
+        is_sensitive: bool,
+        plain_value: Option<&str>,
+    ) -> Result<()> {
+        let collection_name = normalize_collection_name(collection_name)?;
+        let name = normalize_parameter_name(name)?;
+        let value = if is_sensitive {
+            None
+        } else {
+            plain_value.map(str::to_string)
+        };
+        self.with_conn(|conn| {
+            let now = now_ms();
+            conn.execute(
+                "INSERT INTO collection_parameters (collection_name, name, description, is_sensitive, plain_value, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                 ON CONFLICT(collection_name, name) DO UPDATE SET description = excluded.description,
+                   is_sensitive = excluded.is_sensitive, plain_value = excluded.plain_value, updated_at = excluded.updated_at",
+                params![collection_name, name, description.trim(), is_sensitive as i32, value, now],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_collection_parameter(&self, collection_name: &str, name: &str) -> Result<()> {
+        let collection_name = normalize_collection_name(collection_name)?;
+        let name = normalize_parameter_name(name)?;
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM collection_parameters WHERE collection_name = ?1 AND name = ?2",
+                params![collection_name, name],
+            )?;
+            Ok(())
         })
     }
 
@@ -1236,6 +1323,22 @@ fn migrate_mcp_to_v9(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_collection_parameters_to_v10(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS collection_parameters (
+           collection_name TEXT NOT NULL,
+           name TEXT NOT NULL,
+           description TEXT NOT NULL DEFAULT '',
+           is_sensitive INTEGER NOT NULL DEFAULT 0,
+           plain_value TEXT NULL,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL,
+           PRIMARY KEY (collection_name, name)
+         );",
+    )?;
+    Ok(())
+}
+
 fn normalize_tag_name(name: &str) -> Result<String> {
     let normalized = name.trim().to_string();
     if normalized.is_empty() {
@@ -1248,6 +1351,20 @@ fn normalize_collection_name(name: &str) -> Result<String> {
     let normalized = name.trim().to_string();
     if normalized.is_empty() {
         anyhow::bail!("collection name cannot be empty");
+    }
+    Ok(normalized)
+}
+
+fn normalize_parameter_name(name: &str) -> Result<String> {
+    let normalized = name.trim().to_string();
+    let mut chars = normalized.chars();
+    let Some(first) = chars.next() else {
+        anyhow::bail!("parameter name cannot be empty");
+    };
+    if !(first == '_' || first.is_ascii_uppercase())
+        || !chars.all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+    {
+        anyhow::bail!("parameter name must be an uppercase environment variable");
     }
     Ok(normalized)
 }

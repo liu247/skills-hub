@@ -8,7 +8,7 @@ type CollectionsListProps = {
   uncategorizedCount: number
   formatRelative: (ms: number | null | undefined) => string
   onOpenCollection: (name: string | null) => void
-  onRenameCollection: (oldName: string, newName: string) => void
+  onConfigureCollection: (name: string) => void
   onClearCollection: (name: string) => void
   t: TFunction
 }
@@ -18,7 +18,7 @@ const CollectionsList = ({
   uncategorizedCount,
   formatRelative,
   onOpenCollection,
-  onRenameCollection,
+  onConfigureCollection,
   onClearCollection,
   t,
 }: CollectionsListProps) => {
@@ -57,17 +57,11 @@ const CollectionsList = ({
                 <button
                   type="button"
                   className="collection-card-action"
-                  title={t('renameCollection')}
-                  aria-label={t('renameCollection')}
+                  title={t('collectionParameters.configure')}
+                  aria-label={t('collectionParameters.configure')}
                   onClick={(event) => {
                     event.stopPropagation()
-                    const next = window.prompt(
-                      t('renameCollectionPrompt'),
-                      collection.name,
-                    )
-                    if (next?.trim() && next.trim() !== collection.name) {
-                      onRenameCollection(collection.name, next.trim())
-                    }
+                    onConfigureCollection(collection.name)
                   }}
                 >
                   <Pencil size={14} />

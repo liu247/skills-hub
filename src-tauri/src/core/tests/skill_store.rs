@@ -42,6 +42,36 @@ fn schema_is_idempotent() {
 }
 
 #[test]
+fn collection_parameters_round_trip_and_validate_environment_names() {
+    let (_dir, store) = make_store();
+    let mut skill = make_skill("collection-skill", "Example", "/tmp/example", 1);
+    skill.collection = Some("example-suite".to_string());
+    store.upsert_skill(&skill).unwrap();
+
+    store
+        .upsert_collection_parameter("example-suite", "EXAMPLE_API_KEY", "API key", true, None)
+        .unwrap();
+    store
+        .upsert_collection_parameter(
+            "example-suite",
+            "EXAMPLE_MODEL",
+            "Model identifier",
+            false,
+            Some("example-small"),
+        )
+        .unwrap();
+
+    let parameters = store.list_collection_parameters("example-suite").unwrap();
+    assert_eq!(parameters.len(), 2);
+    assert!(parameters[0].is_sensitive);
+    assert_eq!(parameters[0].plain_value, None);
+    assert_eq!(parameters[1].plain_value.as_deref(), Some("example-small"));
+    assert!(store
+        .upsert_collection_parameter("example-suite", "bad-name", "", false, None)
+        .is_err());
+}
+
+#[test]
 fn schema_repairs_missing_mcp_tables_when_version_is_already_current() {
     let dir = tempfile::tempdir().expect("tempdir");
     let db = dir.path().join("test.db");

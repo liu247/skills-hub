@@ -9,7 +9,7 @@ type AiParseModalProps = {
   busy: boolean
   providers: AiProviderConfigDto[]
   onClose: () => void
-  onParse: (provider: AiProviderConfigDto['provider'], sourceUrl: string) => Promise<AiParsePlanDto | null>
+  onParse: (provider: AiProviderConfigDto['provider'], sourceUrl: string, expectedKind: 'skill' | 'mcp') => Promise<AiParsePlanDto | null>
   onConfirm: (plan: AiParsePlanDto) => void
   t: TFunction
 }
@@ -27,7 +27,7 @@ const AiParseModal = ({ open, mode, busy, providers, onClose, onParse, onConfirm
   const parse = async () => {
     const selectedProvider = provider || eligible[0]?.provider
     if (!selectedProvider || !sourceUrl.trim()) return
-    const nextPlan = await onParse(selectedProvider, sourceUrl.trim())
+    const nextPlan = await onParse(selectedProvider, sourceUrl.trim(), mode)
     setPlan(nextPlan)
     setPlanText(nextPlan ? JSON.stringify(nextPlan, null, 2) : '')
     setPlanError('')
@@ -56,6 +56,7 @@ const AiParseModal = ({ open, mode, busy, providers, onClose, onParse, onConfirm
           {!plan ? <button type="button" className="btn btn-primary" disabled={busy || !sourceUrl.trim() || !eligible.length} onClick={() => void parse()}><FileSearch size={15}/>{t('aiParse.parse')}</button> : <div className="ai-parse-preview">
             <div className="ai-parse-summary"><strong>{plan.kind === 'unknown' ? t('aiParse.unknown') : plan.kind.toUpperCase()}</strong><span>{plan.confidence}</span><p>{plan.summary}</p></div>
             <div className="ai-parse-evidence"><strong>{t('aiParse.evidence')}</strong><ul>{plan.source.evidence.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}</ul></div>
+            {plan.skill_plan?.parameters?.length ? <div className="ai-parse-evidence"><strong>{t('collectionParameters.configure')}</strong><ul>{plan.skill_plan.parameters.map((parameter) => <li key={parameter.name}><code>{parameter.name}</code>{parameter.is_sensitive ? ` · ${t('collectionParameters.sensitive')}` : ''}{parameter.description ? ` · ${parameter.description}` : ''}</li>)}</ul></div> : null}
             {plan.warnings.length ? <div className="ai-parse-notice"><TriangleAlert size={16}/><span>{plan.warnings.join(' ')}</span></div> : null}
             <label className="form-field"><span className="label">{t('aiParse.editPlan')}</span><textarea className="input mono ai-parse-json" value={planText} onChange={(event) => updatePlan(event.target.value)} /></label>
             {planError ? <div className="ai-parse-notice"><TriangleAlert size={16}/>{planError}</div> : null}

@@ -72,6 +72,14 @@ export type CollectionDto = {
   updated_at: number
 }
 
+export type CollectionParameterDto = {
+  name: string
+  description: string
+  is_sensitive: boolean
+  value?: string | null
+  has_value: boolean
+}
+
 export type GitSkillCandidate = {
   name: string
   description?: string | null
@@ -258,7 +266,12 @@ export type AiParsePlanDto = {
   source: { url: string; path?: string | null; evidence: string[] }
   confidence: string
   warnings: string[]
-  skill_plan?: { name: string; source_url: string; subpath?: string | null } | null
+  skill_plan?: {
+    name: string
+    source_url: string
+    subpath?: string | null
+    parameters?: { name: string; description: string; is_sensitive: boolean; default_value?: string | null; required: boolean; evidence: string[] }[]
+  } | null
   mcp_plan?: {
     name: string
     transport: 'stdio' | 'http'

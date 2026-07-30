@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use crate::core::ai_parser::{
     delete_provider_api_key, get_provider_configs, parse_source_with_ai, save_provider_config,
-    set_provider_api_key, test_provider_connection, AiParsePlan, AiProvider, AiProviderConfig,
-    AiProviderConfigStatus,
+    set_provider_api_key, test_provider_connection, AiParsePlan, AiPlanKind, AiProvider,
+    AiProviderConfig, AiProviderConfigStatus, AiSkillParameter,
 };
 use crate::core::auto_update::{
     get_auto_update_config as get_auto_update_config_core, record_auto_update_triggered,
@@ -2211,6 +2211,7 @@ pub async fn parse_ai_source(
     store: State<'_, SkillStore>,
     provider: AiProvider,
     sourceUrl: String,
+    expectedKind: Option<AiPlanKind>,
 ) -> Result<AiParsePlan, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -2219,6 +2220,7 @@ pub async fn parse_ai_source(
             &LocalCredentialStore::from_store(&store)?,
             provider,
             &sourceUrl,
+            expectedKind,
         )
     })
     .await
@@ -2338,6 +2340,15 @@ pub struct CollectionDto {
     pub name: String,
     pub skill_count: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionParameterDto {
+    pub name: String,
+    pub description: String,
+    pub is_sensitive: bool,
+    pub value: Option<String>,
+    pub has_value: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2514,6 +2525,212 @@ pub fn rename_collection(
 pub fn clear_collection(store: State<'_, SkillStore>, name: String) -> Result<(), String> {
     store.clear_collection(&name).map_err(format_anyhow_error)
 }
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub fn get_collection_parameters(
+    store: State<'_, SkillStore>,
+    collectionName: String,
+) -> Result<Vec<CollectionParameterDto>, String> {
+    let credentials = LocalCredentialStore::from_store(&store).map_err(format_anyhow_error)?;
+    store
+        .list_collection_parameters(&collectionName)
+        .map_err(format_anyhow_error)?
+        .into_iter()
+        .map(|parameter| {
+            let has_value = if parameter.is_sensitive {
+                credentials
+                    .get(
+                        &collection_credential_owner(&collectionName),
+                        &parameter.name,
+                    )
+                    .map_err(format_anyhow_error)?
+                    .is_some()
+            } else {
+                parameter.plain_value.is_some()
+            };
+            Ok(CollectionParameterDto {
+                name: parameter.name,
+                description: parameter.description,
+                is_sensitive: parameter.is_sensitive,
+                value: if parameter.is_sensitive {
+                    None
+                } else {
+                    parameter.plain_value
+                },
+                has_value,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn save_collection_parameter(
+    store: State<'_, SkillStore>,
+    collectionName: String,
+    parameter: CollectionParameterDto,
+    secretValue: Option<String>,
+) -> Result<Vec<CollectionParameterDto>, String> {
+    let store_clone = store.inner().clone();
+    let collection_for_save = collectionName.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let credentials = LocalCredentialStore::from_store(&store_clone)?;
+        let owner = collection_credential_owner(&collection_for_save);
+        if parameter.is_sensitive {
+            store_clone.upsert_collection_parameter(
+                &collection_for_save,
+                &parameter.name,
+                &parameter.description,
+                true,
+                None,
+            )?;
+            if let Some(value) = secretValue {
+                if value.is_empty() {
+                    credentials.delete(&owner, &parameter.name)?;
+                } else {
+                    credentials.set(&owner, &parameter.name, &value)?;
+                }
+            }
+        } else {
+            credentials.delete(&owner, &parameter.name)?;
+            store_clone.upsert_collection_parameter(
+                &collection_for_save,
+                &parameter.name,
+                &parameter.description,
+                false,
+                parameter.value.as_deref(),
+            )?;
+        }
+        materialize_collection_env(&store_clone, &credentials, &collection_for_save)?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)?;
+    get_collection_parameters(store, collectionName)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn delete_collection_parameter(
+    store: State<'_, SkillStore>,
+    collectionName: String,
+    name: String,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let credentials = LocalCredentialStore::from_store(&store)?;
+        credentials.delete(&collection_credential_owner(&collectionName), &name)?;
+        store.delete_collection_parameter(&collectionName, &name)?;
+        materialize_collection_env(&store, &credentials, &collectionName)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn apply_ai_skill_parameters(
+    store: State<'_, SkillStore>,
+    skillId: String,
+    parameters: Vec<AiSkillParameter>,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let skill = store
+            .get_skill_by_id(&skillId)?
+            .context("installed Skill was not found")?;
+        let collection = skill
+            .collection
+            .context("installed Skill has no collection")?;
+        for parameter in parameters {
+            store.upsert_collection_parameter(
+                &collection,
+                &parameter.name,
+                &parameter.description,
+                parameter.is_sensitive,
+                parameter.default_value.as_deref(),
+            )?;
+        }
+        let credentials = LocalCredentialStore::from_store(&store)?;
+        materialize_collection_env(&store, &credentials, &collection)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+    .map_err(format_anyhow_error)
+}
+
+fn collection_credential_owner(collection_name: &str) -> String {
+    format!("collection:{}", collection_name.trim())
+}
+
+fn materialize_collection_env(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+    collection_name: &str,
+) -> anyhow::Result<()> {
+    let values = store.list_collection_parameters(collection_name)?;
+    let owner = collection_credential_owner(collection_name);
+    let mut lines = Vec::new();
+    for parameter in values {
+        let value = if parameter.is_sensitive {
+            credentials.get(&owner, &parameter.name)?
+        } else {
+            parameter.plain_value
+        };
+        if let Some(value) = value {
+            lines.push(format!("{}={}", parameter.name, value));
+        }
+    }
+    let marker_start = "# >>> Skills Hub managed parameters >>>";
+    let marker_end = "# <<< Skills Hub managed parameters <<<";
+    let block = format!("{marker_start}\n{}\n{marker_end}\n", lines.join("\n"));
+    for skill in store
+        .list_skills()?
+        .into_iter()
+        .filter(|skill| skill.collection.as_deref() == Some(collection_name))
+    {
+        let path = std::path::Path::new(&skill.central_path).join(".env");
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let next = match (current.find(marker_start), current.find(marker_end)) {
+            (Some(start), Some(end)) if end >= start => {
+                let end = end + marker_end.len();
+                format!(
+                    "{}{}{}",
+                    &current[..start],
+                    block,
+                    current[end..].trim_start_matches('\n')
+                )
+            }
+            _ if current.is_empty() => block.clone(),
+            _ => format!("{}\n{}", current.trim_end(), block),
+        };
+        std::fs::write(&path, next)
+            .with_context(|| format!("write managed environment file {:?}", path))?;
+        #[cfg(unix)]
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        for target in store.list_skill_targets(&skill.id)? {
+            let mode = match target.mode.as_str() {
+                "copy" => SyncMode::Copy,
+                "symlink" => SyncMode::Symlink,
+                "junction" => SyncMode::Junction,
+                _ => SyncMode::Auto,
+            };
+            let _ = sync_dir_with_mode_with_overwrite(
+                mode,
+                std::path::Path::new(&skill.central_path),
+                std::path::Path::new(&target.target_path),
+                true,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[tauri::command]
 #[allow(non_snake_case)]
