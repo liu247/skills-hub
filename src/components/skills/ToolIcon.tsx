@@ -49,6 +49,7 @@ const logoByToolKey: Record<string, string> = {
   junie: junieLogo,
   kilo_code: kiloCodeLogo,
   kimi_cli: kimiLogo,
+  kiro: kiroLogo,
   kiro_cli: kiroLogo,
   mcpjam: mcpLogo,
   mistral_vibe: mistralLogo,

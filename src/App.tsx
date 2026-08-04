@@ -78,6 +78,7 @@ import type {
   ManagedSkill,
   McpServerDto,
   McpImportCandidateDto,
+  GithubRepoSummaryDto,
   LocalMcpPlanDto,
   OnboardingPlan,
   OnlineSkillDto,
@@ -224,6 +225,7 @@ function App() {
   const [mcpServers, setMcpServers] = useState<McpServerDto[]>([])
   const [mcpBusy, setMcpBusy] = useState(false)
   const [mcpCandidates, setMcpCandidates] = useState<McpImportCandidateDto[]>([])
+  const [mcpSearchResults, setMcpSearchResults] = useState<GithubRepoSummaryDto[]>([])
   const [localMcpPlan, setLocalMcpPlan] = useState<LocalMcpPlanDto | null>(null)
   const [aiProviderConfigs, setAiProviderConfigs] = useState<AiProviderConfigDto[]>([])
   const [aiParseMode, setAiParseMode] = useState<'skill' | 'mcp' | null>(null)
@@ -528,6 +530,14 @@ function App() {
     finally { setMcpBusy(false) }
   }, [invokeTauri])
 
+  const searchMcpGithub = useCallback(async (query: string) => {
+    setMcpBusy(true)
+    try {
+      setMcpSearchResults(await invokeTauri<GithubRepoSummaryDto[]>('search_github', { query: `${query.trim()} mcp`, limit: 15 }))
+    } catch (err) { toast.error(err instanceof Error ? err.message : String(err)) }
+    finally { setMcpBusy(false) }
+  }, [invokeTauri])
+
   const scanLocalMcpConfigs = useCallback(async () => {
     setMcpBusy(true)
     try {
@@ -787,6 +797,18 @@ function App() {
       supports_project_scope: info.supports_project_scope,
     }))
   }, [t, enabledToolInfos])
+
+  const mcpTools = useMemo(() => {
+    const byKey = new Map(toolInfos.map((info) => [info.key, info]))
+    return ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix'].map((key) => {
+      const info = byKey.get(key)
+      return {
+        id: key,
+        label: t(`tools.${key}`, { defaultValue: info?.label ?? key }),
+        avatar: info?.avatar ?? null,
+      }
+    })
+  }, [toolInfos, t])
 
   const toolLabelById = useMemo(() => {
     const out: Record<string, string> = {}
@@ -3903,6 +3925,7 @@ function App() {
         ) : activeView === 'mcp' || activeView === 'mcp-manual' ? (
           <McpPage
             servers={mcpServers}
+            tools={mcpTools}
             busy={mcpBusy}
             initialManualEditor={activeView === 'mcp-manual'}
             onSave={saveMcpServer}
@@ -3916,7 +3939,7 @@ function App() {
             t={t}
           />
         ) : activeView === 'mcp-add' ? (
-          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp-manual')} onOpenAiParse={() => setAiParseMode('mcp')} t={t} />
+          <McpImportPage busy={mcpBusy} candidates={mcpCandidates} searchResults={mcpSearchResults} onSearch={(query) => void searchMcpGithub(query)} onScan={(url) => void scanMcpGitSource(url)} onImport={(candidates) => void importMcpCandidates(candidates)} onOpenManual={() => setActiveView('mcp-manual')} onOpenAiParse={() => setAiParseMode('mcp')} t={t} />
         ) : activeView === 'manage' ? (
           <div className="management-page">
             <div className="management-header">

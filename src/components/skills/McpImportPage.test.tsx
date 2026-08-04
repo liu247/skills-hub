@@ -15,7 +15,7 @@ const t = ((key: string) => ({
 describe('McpImportPage', () => {
   it('provides GitHub discovery and manual configuration entry points', () => {
     const markup = renderToStaticMarkup(
-      <McpImportPage busy={false} candidates={[]} onScan={() => undefined} onImport={() => undefined} onOpenManual={() => undefined} onOpenAiParse={() => undefined} t={t} />,
+      <McpImportPage busy={false} candidates={[]} searchResults={[]} onSearch={() => undefined} onScan={() => undefined} onImport={() => undefined} onOpenManual={() => undefined} onOpenAiParse={() => undefined} t={t} />,
     )
     expect(markup).toContain('Add MCP')
     expect(markup).toContain('Repository or config URL')

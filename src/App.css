@@ -5138,6 +5138,8 @@
 .mcp-transport { margin-left: 8px; padding: 2px 6px; font-size: 11px; border-radius: 999px; background: var(--bg-hover); color: var(--text-secondary); }
 .mcp-server-actions { flex-shrink: 0; }
 .mcp-target-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.mcp-target-avatars { margin-top: 8px; }
+.skill-tool-avatars button.error { border-color: var(--danger-soft-border); background: var(--danger-soft-bg); }
 .mcp-target-badge { padding: 2px 7px; border: 1px solid var(--success-soft-border); border-radius: 999px; background: var(--success-soft-bg); color: var(--status-success); font-size: 11px; }
 .mcp-target-badge.error { border-color: var(--danger-soft-border); background: var(--danger-soft-bg); color: var(--status-error); }
 .mcp-target-empty { color: var(--text-tertiary); font-size: 12px; }
@@ -5153,6 +5155,17 @@
 .settings-ai-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .settings-item-desc svg { flex: 0 0 auto; }
 .mcp-import-heading-actions { display: flex; align-items: center; gap: 8px; }
+.mcp-search-results { display: flex; flex-direction: column; gap: 8px; }
+.mcp-search-results-head { display: flex; align-items: baseline; gap: 8px; }
+.mcp-search-results-head span { color: var(--text-tertiary); font-size: 12px; }
+.mcp-search-repo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.mcp-search-repo { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-app); text-align: left; cursor: pointer; transition: border-color .15s ease; }
+.mcp-search-repo:hover:not(:disabled) { border-color: var(--accent-primary); }
+.mcp-search-repo:disabled { cursor: not-allowed; opacity: .6; }
+.mcp-search-repo-icon { flex: 0 0 auto; color: var(--text-secondary); }
+.mcp-search-repo-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.mcp-search-repo-copy small { color: var(--text-tertiary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-search-repo-stars { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; color: var(--text-secondary); font-size: 12px; }
 .ai-parse-modal { width: min(620px, calc(100vw - 32px)); }
 .ai-parse-body { display: flex; flex-direction: column; gap: 14px; }
 .ai-parse-notice { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px solid var(--warning-soft-border); border-radius: var(--radius-md); background: var(--warning-soft-bg); color: var(--text-primary); font-size: 12px; }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::credential_store::{CredentialStore, MemoryCredentialStore};
+use crate::core::credential_store::{CredentialStore, LocalCredentialStore};
 use crate::core::skill_store::SkillRecord;
 
 #[test]
@@ -69,7 +69,10 @@ fn repairs_legacy_local_mcp_records_from_backup_without_proxying_runtime_values(
             ],
         )
         .unwrap();
-    let credentials = MemoryCredentialStore::default();
+    // The command layer resolves credential references against the same
+    // SQLite-backed credential store it writes, so the test must use the
+    // store-backed credentials instead of an in-memory stand-in.
+    let credentials = LocalCredentialStore::from_store(&store).unwrap();
 
     assert_eq!(
         repair_legacy_local_mcp_records(&store, &credentials).unwrap(),

@@ -177,6 +177,15 @@ export type McpImportCandidateDto = {
   source_url: string
 }
 
+export type GithubRepoSummaryDto = {
+  full_name: string
+  html_url: string
+  description?: string | null
+  stars: number
+  updated_at: string
+  clone_url: string
+}
+
 export type LocalMcpVariantDto = {
   host: string
   path: string

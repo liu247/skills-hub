@@ -1,13 +1,14 @@
 import { memo, useMemo, useState } from 'react'
 import { ArrowUpDown, ChevronLeft, FolderKanban, Grid2X2, List, Plus, RefreshCw, Search, Server, Trash2 } from 'lucide-react'
 import type { TFunction } from 'i18next'
-import type { McpServerDto } from './types'
+import type { McpServerDto, ToolOption } from './types'
 import { groupMcpServersBySource } from './mcpWorkspace'
-import McpTargetModal from './modals/McpTargetModal'
 import McpTargetConflictModal from './modals/McpTargetConflictModal'
+import ToolIcon from './ToolIcon'
 
 type McpPageProps = {
   servers: McpServerDto[]
+  tools: ToolOption[]
   busy: boolean
   initialManualEditor: boolean
   onSave: (server: McpServerDto) => Promise<McpServerDto | null>
@@ -35,7 +36,7 @@ const parseKeyValueText = (value: string) => Object.fromEntries(value.split('\n'
 }))
 const referenceName = (value: string) => value.match(/^\$\{([A-Z0-9_]+)\}$/)?.[1]
 
-const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
+const McpPage = ({ servers, tools, busy, initialManualEditor, onSave, onSetSecret, onDelete, onSync, onSetTargets, onScanLocal, onOpenImport, onCloseManualEditor, t }: McpPageProps) => {
   const [draft, setDraft] = useState<McpServerDto | null>(() => initialManualEditor ? emptyServer() : null)
   const [secretNames, setSecretNames] = useState('')
   const [secretValues, setSecretValues] = useState<Record<string, string>>({})
@@ -101,25 +102,44 @@ const McpPage = ({ servers, busy, initialManualEditor, onSave, onSetSecret, onDe
     <div className="mcp-editor-actions"><button type="button" className="btn btn-secondary" onClick={() => { setDraft(null); if (initialManualEditor) onCloseManualEditor() }}>{t('cancel')}</button><button type="button" className="btn btn-primary" disabled={busy} onClick={() => void save()}>{t('save')}</button></div>
   </div> : null
 
+  const targetStatus = (server: McpServerDto, toolId: string): 'ok' | 'error' | 'none' => {
+    const target = server.targets.find((item) => item.tool === toolId)
+    if (!target) return 'none'
+    return target.status === 'error' ? 'error' : 'ok'
+  }
+
   const renderServer = (server: McpServerDto) => <article className="mcp-server-card" key={server.id}>
-    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-badges">{server.targets.length ? server.targets.map((target) => <span className={target.status === 'error' ? 'mcp-target-badge error' : 'mcp-target-badge'} key={target.tool}>{t(`tools.${target.tool}`)}</span>) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
-    <div className="mcp-server-actions">{server.source_url?.startsWith('local://') ? <button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openRepairEditor(server)}>{t('mcp.repairLocal')}</button> : null}<button type="button" className="btn btn-secondary" disabled={busy} onClick={() => setTargetServer(server)}>{t('mcp.manageTargets')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
+    <div className="mcp-server-info"><div className="mcp-server-title"><Server size={17}/><strong>{server.name}</strong><span className="mcp-transport">{server.transport}</span></div><p>{server.transport === 'stdio' ? `${server.command ?? ''} ${server.args.join(' ')}` : server.url}</p><div className="mcp-target-avatars skill-tool-avatars" aria-label={t('mcp.targetsTitle')}>{tools.length ? tools.map((tool) => {
+      const status = targetStatus(server, tool.id)
+      const stateLabel = status === 'ok' ? t('toolManagement.synced') : t('toolManagement.notSynced')
+      return <button key={tool.id} type="button" className={status === 'ok' ? 'synced' : status === 'error' ? 'error' : 'not-synced'} title={`${tool.label} · ${stateLabel}${status === 'error' ? ` · ${t('mcp.needsAttention')}` : ''}`} aria-label={`${tool.label} · ${stateLabel}`} aria-pressed={status === 'ok'} disabled={busy} onClick={() => toggleTarget(server, tool.id)}><ToolIcon toolKey={tool.id} label={tool.label} avatar={tool.avatar}/></button>
+    }) : <span className="mcp-target-empty">{t('mcp.noTargets')}</span>}</div>{server.source_path ? <small>{server.source_path}</small> : null}<small>{server.secret_refs.length ? t('mcp.secretStatus', { count: server.secret_refs.filter((item) => item.has_value).length, total: server.secret_refs.length }) : t('mcp.noSecrets')}</small></div>
+    <div className="mcp-server-actions"><button type="button" className="btn btn-secondary" disabled={busy} onClick={() => openRepairEditor(server)}>{t('mcp.edit')}</button><button type="button" className="icon-btn danger" onClick={() => void onDelete(server.id)} aria-label={t('delete')}><Trash2 size={16}/></button></div>
   </article>
 
-  const saveTargets = async (tools: string[], overwriteExisting = false) => {
-    if (!targetServer) return
+  const applyTargets = async (server: McpServerDto, selected: string[], overwriteExisting = false) => {
     try {
-      await onSetTargets(targetServer.id, tools, overwriteExisting)
+      await onSetTargets(server.id, selected, overwriteExisting)
       setTargetConflict(null)
       setTargetServer(null)
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error)
       if (raw.startsWith('MCP_TARGET_CONFLICT|')) {
-        setTargetConflict({ tools: raw.slice('MCP_TARGET_CONFLICT|'.length).split(',').filter(Boolean), selectedTools: tools })
+        setTargetServer(server)
+        setTargetConflict({ tools: raw.slice('MCP_TARGET_CONFLICT|'.length).split(',').filter(Boolean), selectedTools: selected })
       }
     }
   }
-  const targetModal = <>{targetServer ? <McpTargetModal open busy={busy} selectedTools={targetServer.targets.map((target) => target.tool)} onClose={() => setTargetServer(null)} onSave={(tools) => { void saveTargets(tools) }} t={t} /> : null}{targetServer && targetConflict ? <McpTargetConflictModal open busy={busy} tools={targetConflict.tools} serverName={targetServer.name} onCancel={() => setTargetConflict(null)} onReplace={() => void saveTargets(targetConflict.selectedTools, true)} t={t} /> : null}</>
+
+  const toggleTarget = (server: McpServerDto, toolId: string) => {
+    const has = server.targets.some((target) => target.tool === toolId)
+    const next = has
+      ? server.targets.filter((target) => target.tool !== toolId).map((target) => target.tool)
+      : [...server.targets.map((target) => target.tool), toolId]
+    void applyTargets(server, next)
+  }
+
+  const targetModal = <>{targetServer && targetConflict ? <McpTargetConflictModal open busy={busy} tools={targetConflict.tools} serverName={targetServer.name} onCancel={() => setTargetConflict(null)} onReplace={() => void applyTargets(targetServer, targetConflict.selectedTools, true)} t={t} /> : null}</>
 
   if (currentCollection) return <><div className="mcp-workspace"><div className="collection-breadcrumb"><button type="button" className="btn btn-secondary" onClick={() => setActiveSource(null)}><ChevronLeft size={15}/>{t('mcp.back')}</button><span className="collection-breadcrumb-name">{sourceLabel(currentCollection.key)}</span><button type="button" className="btn btn-secondary mcp-source-sync" disabled={busy} onClick={() => void Promise.all(currentCollection.servers.map((server) => onSync(server.id, targets)))}><RefreshCw size={15}/>{t('mcp.sourceSync')}</button></div>{renderEditor()}<div className="mcp-server-list">{currentCollection.servers.map(renderServer)}</div></div>{targetModal}</>
 

@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use serde_json::{json, Map, Value};
 
-use super::mcp::credential_name_from_reference;
 use super::skill_store::McpServerRecord;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,22 +20,6 @@ pub enum McpHost {
 #[derive(Clone, Debug)]
 pub struct McpSyncOutcome {
     pub backup_path: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub struct BridgeRuntime {
-    pub executable: PathBuf,
-    pub database_path: PathBuf,
-    pub http_port: Option<u16>,
-}
-
-pub fn requires_credential_bridge(server: &McpServerRecord) -> bool {
-    server
-        .env
-        .values()
-        .chain(server.headers.values())
-        .filter_map(serde_json::Value::as_str)
-        .any(|value| credential_name_from_reference(value).is_some())
 }
 
 pub fn global_config_path(host: McpHost) -> Result<PathBuf> {
@@ -53,15 +39,14 @@ pub fn global_config_path_in(home: &Path, host: McpHost) -> Result<PathBuf> {
     })
 }
 
-pub fn render_server(
-    host: McpHost,
-    server: &McpServerRecord,
-    bridge: Option<&BridgeRuntime>,
-) -> Result<String> {
-    let requires_bridge = requires_credential_bridge(server);
+/// Renders one managed MCP server into the target host's own configuration
+/// format. Credential references must already be resolved to plaintext values
+/// (see `resolved_server_for_render` in the command layer); this function
+/// performs no bridge or runtime injection.
+pub fn render_server(host: McpHost, server: &McpServerRecord) -> Result<String> {
     let value = match server.transport.as_str() {
-        "stdio" => render_stdio(server, requires_bridge, bridge)?,
-        "http" => render_http(server, requires_bridge, bridge)?,
+        "stdio" => render_stdio(server)?,
+        "http" => render_http(server)?,
         _ => anyhow::bail!("unsupported MCP transport {}", server.transport),
     };
     match host {
@@ -116,14 +101,13 @@ pub fn sync_host_file(
     server: &McpServerRecord,
     path: &Path,
     owns_existing_entry: bool,
-    bridge: Option<&BridgeRuntime>,
 ) -> Result<McpSyncOutcome> {
     let existing = if path.exists() {
         std::fs::read_to_string(path).context("read existing MCP configuration")?
     } else {
         String::new()
     };
-    let rendered = render_server(host, server, bridge)?;
+    let rendered = render_server(host, server)?;
     let next = match host {
         McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
             merge_json_host_config(&existing, &rendered, &server.name, owns_existing_entry)?
@@ -324,6 +308,9 @@ pub fn write_config_atomically(path: &Path, contents: &str) -> Result<Option<Pat
         uuid::Uuid::new_v4()
     ));
     std::fs::write(&temp, contents).context("write temporary MCP configuration")?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))
+        .context("secure MCP configuration file")?;
     std::fs::rename(&temp, path).context("atomically replace MCP configuration")?;
     Ok(backup)
 }
@@ -335,49 +322,24 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn render_stdio(
-    server: &McpServerRecord,
-    requires_bridge: bool,
-    bridge: Option<&BridgeRuntime>,
-) -> Result<Value> {
+fn render_stdio(server: &McpServerRecord) -> Result<Value> {
     let command = server
         .command
         .as_deref()
         .context("stdio server command is required")?;
-    if requires_bridge {
-        let bridge = bridge.context("credential bridge runtime is required")?;
-        let mut args = vec![
-            "--mcp-bridge".to_string(),
-            "stdio".to_string(),
-            "--db".to_string(),
-            bridge.database_path.to_string_lossy().to_string(),
-            "--server-id".to_string(),
-            server.id.clone(),
-            "--".to_string(),
-            command.to_string(),
-        ];
-        args.extend(server.args.clone());
-        return Ok(json!({ "command": bridge.executable, "args": args }));
-    }
     Ok(json!({ "command": command, "args": server.args, "env": server.env }))
 }
 
-fn render_http(
-    server: &McpServerRecord,
-    requires_bridge: bool,
-    bridge: Option<&BridgeRuntime>,
-) -> Result<Value> {
+fn render_http(server: &McpServerRecord) -> Result<Value> {
     let url = server
         .url
         .as_deref()
         .context("HTTP server URL is required")?;
-    if requires_bridge {
-        let port = bridge
-            .and_then(|runtime| runtime.http_port)
-            .context("credential bridge port is required")?;
-        return Ok(json!({ "url": format!("http://127.0.0.1:{port}/mcp") }));
+    let mut entry = json!({ "url": url });
+    if !server.headers.is_empty() {
+        entry["headers"] = Value::Object(server.headers.clone());
     }
-    Ok(json!({ "url": url }))
+    Ok(entry)
 }
 
 fn render_codex(server: &McpServerRecord, value: &Value) -> Result<String> {
@@ -413,7 +375,12 @@ fn render_reasonix(server: &McpServerRecord, value: &Value) -> Result<String> {
         table[key] = match value {
             Value::String(value) => toml_edit::value(value),
             Value::Array(values) => toml_edit::value(toml_array(values)),
-            Value::Object(values) => toml_edit::Item::Table(toml_table(values)?),
+            // plugins is an array of tables: a nested `[plugins.env]` header
+            // is invalid TOML once more than one plugin declares env, so env
+            // must be rendered as an inline table.
+            Value::Object(values) => {
+                toml_edit::Item::Value(toml_edit::Value::InlineTable(toml_inline_table(values)?))
+            }
             _ => anyhow::bail!("unsupported Reasonix field {key}"),
         };
     }
@@ -436,6 +403,21 @@ fn toml_table(values: &Map<String, Value>) -> Result<toml_edit::Table> {
             value
                 .as_str()
                 .context("MCP environment values must be strings")?,
+        );
+    }
+    Ok(table)
+}
+
+fn toml_inline_table(values: &Map<String, Value>) -> Result<toml_edit::InlineTable> {
+    let mut table = toml_edit::InlineTable::new();
+    for (key, value) in values {
+        table.insert(
+            key,
+            toml_edit::Value::from(
+                value
+                    .as_str()
+                    .context("MCP environment values must be strings")?,
+            ),
         );
     }
     Ok(table)

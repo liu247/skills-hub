@@ -1,57 +1,13 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 use crate::core::credential_store::{CredentialStore, MemoryCredentialStore};
-use crate::core::mcp_bridge::{
-    resolve_bridge_environment, resolve_bridge_values, CachedCredentialStore,
-};
-use anyhow::Result;
-
-struct CountingCredentialStore {
-    reads: AtomicUsize,
-}
-
-struct SlowCredentialStore {
-    reads: AtomicUsize,
-}
-
-impl CredentialStore for SlowCredentialStore {
-    fn set(&self, _server_id: &str, _env_var: &str, _value: &str) -> Result<()> {
-        Ok(())
-    }
-
-    fn get(&self, _server_id: &str, _env_var: &str) -> Result<Option<String>> {
-        self.reads.fetch_add(1, Ordering::SeqCst);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        Ok(Some("secret-value".into()))
-    }
-
-    fn delete(&self, _server_id: &str, _env_var: &str) -> Result<()> {
-        Ok(())
-    }
-}
-
-impl CredentialStore for CountingCredentialStore {
-    fn set(&self, _server_id: &str, _env_var: &str, _value: &str) -> Result<()> {
-        Ok(())
-    }
-
-    fn get(&self, _server_id: &str, _env_var: &str) -> Result<Option<String>> {
-        self.reads.fetch_add(1, Ordering::SeqCst);
-        Ok(Some("secret-value".into()))
-    }
-
-    fn delete(&self, _server_id: &str, _env_var: &str) -> Result<()> {
-        Ok(())
-    }
-}
+use crate::core::mcp_bridge::{resolve_credential_environment, resolve_credential_values};
 
 #[test]
-fn bridge_resolves_references_without_returning_the_reference_literal() {
+fn resolves_references_without_returning_the_reference_literal() {
     let store = MemoryCredentialStore::default();
     store.set("github", "GITHUB_TOKEN", "secret-value").unwrap();
-    let env = resolve_bridge_environment(
+    let env = resolve_credential_environment(
         &store,
         "github",
         &BTreeMap::from([("GITHUB_TOKEN".into(), "${GITHUB_TOKEN}".into())]),
@@ -66,8 +22,8 @@ fn bridge_resolves_references_without_returning_the_reference_literal() {
 }
 
 #[test]
-fn bridge_rejects_missing_credential() {
-    let error = resolve_bridge_environment(
+fn rejects_missing_credential() {
+    let error = resolve_credential_environment(
         &MemoryCredentialStore::default(),
         "github",
         &BTreeMap::from([("GITHUB_TOKEN".into(), "${GITHUB_TOKEN}".into())]),
@@ -79,14 +35,14 @@ fn bridge_rejects_missing_credential() {
 }
 
 #[test]
-fn bridge_keeps_runtime_values_direct_and_resolves_only_secret_references() {
+fn keeps_runtime_values_direct_and_resolves_only_secret_references() {
     let store = MemoryCredentialStore::default();
     store
-        .set("mcp-pdf", "TAVILY_API_KEY", "secret-value")
+        .set("tavily", "TAVILY_API_KEY", "secret-value")
         .unwrap();
-    let env = resolve_bridge_environment(
+    let env = resolve_credential_environment(
         &store,
-        "mcp-pdf",
+        "tavily",
         &BTreeMap::from([
             ("NODE_PATH".into(), "/opt/node".into()),
             ("MCP_PDF_ALLOWED_PATHS".into(), "/tmp".into()),
@@ -101,10 +57,26 @@ fn bridge_keeps_runtime_values_direct_and_resolves_only_secret_references() {
 }
 
 #[test]
-fn bridge_resolves_header_reference_by_credential_name() {
+fn non_credential_key_with_reference_like_value_passes_through() {
+    // A runtime value that happens to look like a reference must not be
+    // treated as a credential: classification follows is_credential_name,
+    // matching validate_mcp_server_input.
+    let store = MemoryCredentialStore::default();
+    let env = resolve_credential_environment(
+        &store,
+        "mcp-pdf",
+        &BTreeMap::from([("NODE_PATH".into(), "${NODE_PATH}".into())]),
+    )
+    .unwrap();
+
+    assert_eq!(env["NODE_PATH"], "${NODE_PATH}");
+}
+
+#[test]
+fn resolves_header_reference_by_credential_name() {
     let store = MemoryCredentialStore::default();
     store.set("remote", "API_TOKEN", "secret-value").unwrap();
-    let values = resolve_bridge_values(
+    let values = resolve_credential_values(
         &store,
         "remote",
         &BTreeMap::from([("Authorization".into(), "${API_TOKEN}".into())]),
@@ -112,41 +84,4 @@ fn bridge_resolves_header_reference_by_credential_name() {
     .unwrap();
 
     assert_eq!(values["Authorization"], "secret-value");
-}
-
-#[test]
-fn credential_agent_cache_reads_each_keychain_entry_once_per_session() {
-    let store = CachedCredentialStore::new(CountingCredentialStore {
-        reads: AtomicUsize::new(0),
-    });
-
-    assert_eq!(
-        store.get("tavily", "TAVILY_API_KEY").unwrap().as_deref(),
-        Some("secret-value")
-    );
-    assert_eq!(
-        store.get("tavily", "TAVILY_API_KEY").unwrap().as_deref(),
-        Some("secret-value")
-    );
-
-    assert_eq!(store.inner().reads.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn credential_agent_cache_deduplicates_concurrent_keychain_reads() {
-    let store = Arc::new(CachedCredentialStore::new(SlowCredentialStore {
-        reads: AtomicUsize::new(0),
-    }));
-    let first = {
-        let store = Arc::clone(&store);
-        std::thread::spawn(move || store.get("tavily", "TAVILY_API_KEY").unwrap())
-    };
-    let second = {
-        let store = Arc::clone(&store);
-        std::thread::spawn(move || store.get("tavily", "TAVILY_API_KEY").unwrap())
-    };
-
-    assert_eq!(first.join().unwrap().as_deref(), Some("secret-value"));
-    assert_eq!(second.join().unwrap().as_deref(), Some("secret-value"));
-    assert_eq!(store.inner().reads.load(Ordering::SeqCst), 1);
 }

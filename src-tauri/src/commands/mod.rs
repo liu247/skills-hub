@@ -29,8 +29,8 @@ use crate::core::credential_store::{CredentialStore, LocalCredentialStore};
 use crate::core::featured_skills::{fetch_featured_skills, FeaturedSkill};
 use crate::core::github_search::{search_github_repos, RepoSummary};
 use crate::core::installer::{
-    checkout_git_source, install_git_skill, install_git_skill_from_selection, install_local_skill,
-    install_local_skill_from_selection, list_git_skills, list_local_skills,
+    install_git_skill, install_git_skill_from_selection, install_local_skill,
+    install_local_skill_from_selection, install_mcp_repo, list_git_skills, list_local_skills,
     update_managed_skill_from_source, GitSkillCandidate, InstallResult, LocalSkillCandidate,
 };
 use crate::core::mcp::{
@@ -38,14 +38,16 @@ use crate::core::mcp::{
     McpTransport,
 };
 use crate::core::mcp_adapters::{
-    global_config_path, host_config_contains_server, remove_host_file, requires_credential_bridge,
-    sync_host_file, BridgeRuntime, McpHost,
+    global_config_path, host_config_contains_server, remove_host_file, sync_host_file, McpHost,
 };
+use crate::core::mcp_bridge::{resolve_credential_environment, resolve_credential_values};
 use crate::core::mcp_discovery::{
     scan_local_mcp_configs_with_secrets_in, select_local_mcp_from_config, without_managed_targets,
     LocalMcpPlan,
 };
-use crate::core::mcp_import::{scan_mcp_config_files, McpImportCandidate};
+use crate::core::mcp_import::{
+    absolutize_candidate_paths, scan_mcp_config_files, McpImportCandidate,
+};
 use crate::core::network_proxy::{
     app_http_client, get_github_proxy_config as get_github_proxy_config_core,
     get_github_proxy_url as get_github_proxy_url_core,
@@ -459,16 +461,16 @@ pub async fn get_mcp_servers(store: State<'_, SkillStore>) -> Result<Vec<McpServ
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn scan_mcp_git_source(
-    app: tauri::AppHandle,
     store: State<'_, SkillStore>,
     repoUrl: String,
 ) -> Result<Vec<McpImportCandidate>, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let (repo_dir, clone_url, _) = checkout_git_source(&app, &store, &repoUrl)?;
+        let (repo_dir, clone_url) = install_mcp_repo(&store, &repoUrl)?;
         let mut candidates = scan_mcp_config_files(&repo_dir)?;
         for candidate in &mut candidates {
             candidate.source_url = clone_url.clone();
+            absolutize_candidate_paths(candidate, &repo_dir);
         }
         Ok::<_, anyhow::Error>(candidates)
     })
@@ -609,15 +611,8 @@ fn sync_local_selection(
         "reasonix" => McpHost::Reasonix,
         _ => anyhow::bail!("unsupported MCP target {tool}"),
     };
-    let bridge = bridge_runtime_for_server(store, server)?;
-    start_http_bridge(&bridge, server)?;
-    sync_host_file(
-        host,
-        server,
-        std::path::Path::new(path),
-        true,
-        bridge.as_ref(),
-    )?;
+    let resolved = resolved_server_for_render(store, server)?;
+    sync_host_file(host, &resolved, std::path::Path::new(path), true)?;
     store.upsert_mcp_target(&McpServerTargetRecord {
         id: Uuid::new_v4().to_string(),
         mcp_server_id: server.id.clone(),
@@ -626,50 +621,6 @@ fn sync_local_selection(
         last_error: None,
         synced_at: Some(now_ms()),
     })?;
-    Ok(())
-}
-
-fn bridge_runtime_for_server(
-    store: &SkillStore,
-    server: &McpServerRecord,
-) -> anyhow::Result<Option<BridgeRuntime>> {
-    requires_credential_bridge(server)
-        .then(|| {
-            Ok::<_, anyhow::Error>(BridgeRuntime {
-                executable: std::env::current_exe().context("resolve Skills Hub executable")?,
-                database_path: store.db_path().to_path_buf(),
-                http_port: (server.transport == "http")
-                    .then(find_free_loopback_port)
-                    .transpose()?,
-            })
-        })
-        .transpose()
-}
-
-fn start_http_bridge(
-    bridge: &Option<BridgeRuntime>,
-    server: &McpServerRecord,
-) -> anyhow::Result<()> {
-    if let Some(bridge) = bridge {
-        if let Some(port) = bridge.http_port {
-            std::process::Command::new(&bridge.executable)
-                .args([
-                    "--mcp-bridge",
-                    "http",
-                    "--db",
-                    &bridge.database_path.to_string_lossy(),
-                    "--server-id",
-                    &server.id,
-                    "--port",
-                    &port.to_string(),
-                ])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .context("start loopback MCP credential bridge")?;
-        }
-    }
     Ok(())
 }
 
@@ -867,17 +818,10 @@ fn repair_local_mcp_record(
     for (name, value) in selected.literal_credentials {
         credentials.set(&repaired.id, &name, &value)?;
     }
-    let bridge = bridge_runtime_for_server(store, &repaired)?;
-    start_http_bridge(&bridge, &repaired)?;
+    let resolved = resolved_server_for_render(store, &repaired)?;
     for target in store.list_mcp_targets(&repaired.id)? {
         let host = mcp_host(&target.tool)?;
-        sync_host_file(
-            host,
-            &repaired,
-            &global_config_path(host)?,
-            true,
-            bridge.as_ref(),
-        )?;
+        sync_host_file(host, &resolved, &global_config_path(host)?, true)?;
         store.upsert_mcp_target(&McpServerTargetRecord {
             id: target.id,
             mcp_server_id: repaired.id.clone(),
@@ -975,11 +919,7 @@ pub async fn set_mcp_server_targets(
             .into_iter()
             .find(|record| record.id == server_id)
             .context("MCP server not found")?;
-        if requires_credential_bridge(&server) && !server.proxy_enabled {
-            anyhow::bail!("credential proxy is disabled for this MCP server");
-        }
-        let bridge = bridge_runtime_for_server(&store, &server)?;
-        start_http_bridge(&bridge, &server)?;
+        let resolved = resolved_server_for_render(&store, &server)?;
         let existing = store.list_mcp_targets(&server.id)?;
         let additions = desired
             .iter()
@@ -1008,13 +948,7 @@ pub async fn set_mcp_server_targets(
             }
             let host = mcp_host(tool)?;
             let path = global_config_path(host)?;
-            sync_host_file(
-                host,
-                &server,
-                &path,
-                overwrite_existing.unwrap_or(false),
-                bridge.as_ref(),
-            )?;
+            sync_host_file(host, &resolved, &path, overwrite_existing.unwrap_or(false))?;
             store.upsert_mcp_target(&McpServerTargetRecord {
                 id: Uuid::new_v4().to_string(),
                 mcp_server_id: server.id.clone(),
@@ -1063,48 +997,14 @@ pub async fn sync_mcp_server(
             .into_iter()
             .find(|record| record.id == server_id)
             .context("MCP server not found")?;
-        if requires_credential_bridge(&server) && !server.proxy_enabled {
-            anyhow::bail!("credential proxy is disabled for this MCP server");
-        }
-        let requires_bridge = requires_credential_bridge(&server);
-        let bridge = requires_bridge
-            .then(|| {
-                Ok::<_, anyhow::Error>(BridgeRuntime {
-                    executable: std::env::current_exe().context("resolve Skills Hub executable")?,
-                    database_path: store.db_path().to_path_buf(),
-                    http_port: (server.transport == "http")
-                        .then(find_free_loopback_port)
-                        .transpose()?,
-                })
-            })
-            .transpose()?;
-        if let Some(bridge) = &bridge {
-            if let Some(port) = bridge.http_port {
-                std::process::Command::new(&bridge.executable)
-                    .args([
-                        "--mcp-bridge",
-                        "http",
-                        "--db",
-                        &bridge.database_path.to_string_lossy(),
-                        "--server-id",
-                        &server.id,
-                        "--port",
-                        &port.to_string(),
-                    ])
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .context("start loopback MCP credential bridge")?;
-            }
-        }
+        let resolved = resolved_server_for_render(&store, &server)?;
         let existing = store.list_mcp_targets(&server.id)?;
         let mut results = Vec::new();
         for tool in tools {
             let host = mcp_host(&tool)?;
             let owns = existing.iter().any(|target| target.tool == tool);
             let path = global_config_path(host)?;
-            match sync_host_file(host, &server, &path, owns, bridge.as_ref()) {
+            match sync_host_file(host, &resolved, &path, owns) {
                 Ok(_) => {
                     let target = McpServerTargetRecord {
                         id: Uuid::new_v4().to_string(),
@@ -1137,10 +1037,25 @@ pub async fn sync_mcp_server(
     .map_err(format_anyhow_error)
 }
 
-fn find_free_loopback_port() -> anyhow::Result<u16> {
-    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .context("reserve loopback MCP bridge port")?;
-    Ok(listener.local_addr()?.port())
+fn resolved_server_for_render(
+    store: &SkillStore,
+    server: &McpServerRecord,
+) -> anyhow::Result<McpServerRecord> {
+    let credentials = LocalCredentialStore::from_store(store)?;
+    let env = resolve_credential_environment(
+        &credentials,
+        &server.id,
+        &json_map_to_string_map(&server.env)?,
+    )?;
+    let headers = resolve_credential_values(
+        &credentials,
+        &server.id,
+        &json_map_to_string_map(&server.headers)?,
+    )?;
+    let mut resolved = server.clone();
+    resolved.env = string_map_to_json_map(env);
+    resolved.headers = string_map_to_json_map(headers);
+    Ok(resolved)
 }
 
 #[tauri::command]

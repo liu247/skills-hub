@@ -1397,6 +1397,55 @@ pub fn checkout_git_source<R: tauri::Runtime>(
     Ok((path, parsed.clone_url, revision))
 }
 
+/// Installs an MCP repository into `~/.skill-hub/mcp/<repo>/` and returns the
+/// local directory plus the clone URL. Managed MCP runtimes live under the
+/// Skill Hub directory (instead of the transient git cache) so servers stay
+/// available across sessions and are reported to every synced app.
+pub fn install_mcp_repo(store: &SkillStore, repo_url: &str) -> Result<(PathBuf, String)> {
+    let parsed = parse_github_url(repo_url);
+    let repo_name = parsed
+        .clone_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("mcp")
+        .trim_end_matches(".git");
+    let safe_name = sanitize_mcp_repo_name(repo_name);
+    let home = dirs::home_dir().context("resolve user home directory for MCP install")?;
+    let install_root = home.join(".skill-hub").join("mcp");
+    std::fs::create_dir_all(&install_root)
+        .with_context(|| format!("create MCP install dir {:?}", install_root))?;
+    let dest = install_root.join(safe_name);
+    let proxy_url = get_github_proxy_url(store)?;
+    clone_or_pull(
+        &parsed.clone_url,
+        &dest,
+        parsed.branch.as_deref(),
+        None,
+        Some(&proxy_url),
+    )
+    .context("clone MCP repository into ~/.skill-hub")?;
+    Ok((dest, parsed.clone_url))
+}
+
+fn sanitize_mcp_repo_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "mcp".to_string()
+    } else {
+        cleaned
+    }
+}
+
 fn clone_to_cache<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     store: &SkillStore,

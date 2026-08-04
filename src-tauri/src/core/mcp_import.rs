@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -18,6 +19,30 @@ pub struct McpImportCandidate {
     pub headers: BTreeMap<String, String>,
     pub source_path: String,
     pub source_url: String,
+}
+
+/// Rewrites repository-relative command/argument paths to absolute paths under
+/// the install directory, so imported servers keep working after the clone is
+/// persisted in `~/.skill-hub`. External commands (`npx`, `uvx`, `node`, ...)
+/// and absolute paths are left untouched.
+pub fn absolutize_candidate_paths(candidate: &mut McpImportCandidate, repo_dir: &Path) {
+    if let Some(command) = candidate.command.clone() {
+        if is_repo_local_path(&command, repo_dir) {
+            candidate.command = Some(repo_dir.join(command).to_string_lossy().to_string());
+        }
+    }
+    if let Some(first) = candidate.args.first().cloned() {
+        if is_repo_local_path(&first, repo_dir) {
+            candidate.args[0] = repo_dir.join(first).to_string_lossy().to_string();
+        }
+    }
+}
+
+fn is_repo_local_path(value: &str, repo_dir: &Path) -> bool {
+    !value.is_empty()
+        && !value.starts_with('/')
+        && !value.contains("://")
+        && repo_dir.join(value).is_file()
 }
 
 pub fn scan_mcp_config_files(repo_dir: &std::path::Path) -> Result<Vec<McpImportCandidate>> {
