@@ -276,6 +276,41 @@ fn validate_http_url(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Derives an MCP server name from a source URL repository name, so plans
+/// that omit `name` still produce a valid lowercase-hyphen identifier.
+fn derive_mcp_name_from_url(source_url: &str) -> Option<String> {
+    let repo = source_url
+        .trim()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()?
+        .trim_end_matches(".git");
+    if repo.is_empty() {
+        return None;
+    }
+    let name: String = repo
+        .chars()
+        .map(|character| {
+            if character.is_ascii_lowercase() || character.is_ascii_digit() {
+                character
+            } else if character.is_ascii_uppercase() {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 /// Rewrites a GitHub repository page URL to its raw README so the AI parser
 /// receives compact plain text instead of a heavy HTML page (GitHub pages
 /// routinely exceed the parser size limit). Returns None for non-GitHub URLs.
@@ -530,6 +565,42 @@ struct ChatCompletionMessage {
     content: Option<String>,
 }
 
+/// Extracts the first complete JSON object from a candidate string by tracking
+/// brace depth, so responses that wrap the plan in an array (or emit trailing
+/// text after the object) still resolve to a single parseable object.
+fn extract_first_object(candidate: &str) -> Option<String> {
+    let start = candidate.find('{')?;
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in candidate[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+        } else {
+            match character {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(
+                            candidate[start..start + index + character.len_utf8()].to_string(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn extract_json_response(value: &str) -> String {
     let candidate = value
         .trim()
@@ -540,6 +611,11 @@ fn extract_json_response(value: &str) -> String {
         .unwrap_or_else(|| value.trim());
     if serde_json::from_str::<Value>(candidate).is_ok() {
         return candidate.to_string();
+    }
+    if let Some(first_object) = extract_first_object(candidate) {
+        if serde_json::from_str::<Value>(&first_object).is_ok() {
+            return first_object;
+        }
     }
     match (candidate.find('{'), candidate.rfind('}')) {
         (Some(start), Some(end)) if end >= start => candidate[start..=end].to_string(),
@@ -583,6 +659,14 @@ pub fn normalize_ai_plan_json(
     };
     if !root.is_object() && expected_kind == Some(AiPlanKind::Skill) {
         root = minimal_skill_plan_json(fallback_source_url);
+    }
+    // Some models wrap the plan in a top-level array; recover the first object.
+    if let Value::Array(items) = &root {
+        root = items
+            .iter()
+            .find(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("AI returned an array without a plan object"))?;
     }
     let object = root
         .as_object_mut()
@@ -657,6 +741,11 @@ pub fn normalize_ai_plan_json(
             mcp_plan
                 .entry("transport")
                 .or_insert_with(|| Value::String(inferred_transport));
+            if let Some(derived_name) = derive_mcp_name_from_url(fallback_source_url) {
+                mcp_plan
+                    .entry("name")
+                    .or_insert_with(|| Value::String(derived_name));
+            }
         }
     }
 
@@ -693,7 +782,7 @@ pub fn parse_source_with_ai(
     let source_text = fetch_source_text(store, source_url)?;
     let endpoint = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
     let proxy_url = get_github_proxy_url(store)?;
-    let client = app_http_client(&proxy_url, Some(45))?;
+    let client = app_http_client(&proxy_url, Some(90))?;
     let user_content = format!(
         "This is a {} request. Return one JSON object only; do not include Markdown or explanation. \
 For a Skill request, always use kind=skill and include skill_plan with name, source_url, and parameters (use [] when no parameters are found). \
