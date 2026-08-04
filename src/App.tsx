@@ -1311,6 +1311,34 @@ function App() {
     },
     [invokeTauri, isTauri],
   )
+  const handleGithubProxyUrlChange = useCallback(
+    async (url: string) => {
+      const trimmed = url.trim()
+      setGithubProxyConfig((prev) => ({
+        ...prev,
+        url: trimmed,
+        enabled: trimmed !== '',
+        auto_detected: false,
+      }))
+      if (!isTauri) return
+      try {
+        const saved = await invokeTauri<string>('set_github_proxy_url', {
+          proxyUrl: trimmed,
+        })
+        setGithubProxyConfig((prev) => ({
+          ...prev,
+          url: saved,
+          enabled: saved !== '',
+        }))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+        void invokeTauri<GithubProxyConfigDto>('get_github_proxy_config')
+          .then((config) => setGithubProxyConfig(config))
+          .catch(() => {})
+      }
+    },
+    [invokeTauri, isTauri],
+  )
   const handleAiProviderConfigSave = useCallback(async (config: Omit<AiProviderConfigDto, 'has_api_key'>) => {
     if (!isTauri) return
     try {
@@ -4029,6 +4057,7 @@ function App() {
             onGithubTokenChange={handleGithubTokenChange}
             githubProxyConfig={githubProxyConfig}
             onGithubProxyConfigChange={handleGithubProxyConfigChange}
+            onGithubProxyUrlChange={handleGithubProxyUrlChange}
             aiProviderConfigs={aiProviderConfigs}
             onAiProviderConfigSave={handleAiProviderConfigSave}
             onAiProviderApiKeySet={handleAiProviderApiKeySet}

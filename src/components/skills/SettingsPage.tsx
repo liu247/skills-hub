@@ -40,6 +40,7 @@ type SettingsPageProps = {
   onClearGitCacheNow: () => void
   onGithubTokenChange: (token: string) => void
   onGithubProxyConfigChange: (enabled: boolean, port: number) => void
+  onGithubProxyUrlChange: (url: string) => void
   onAiProviderConfigSave: (config: Omit<AiProviderConfigDto, 'has_api_key'>) => void
   onAiProviderApiKeySet: (provider: AiProviderConfigDto['provider'], value: string) => void
   onAiProviderApiKeyDelete: (provider: AiProviderConfigDto['provider']) => void
@@ -65,6 +66,7 @@ const SettingsPage = ({
   onGithubTokenChange,
   githubProxyConfig,
   onGithubProxyConfigChange,
+  onGithubProxyUrlChange,
   aiProviderConfigs,
   onAiProviderConfigSave,
   onAiProviderApiKeySet,
@@ -83,6 +85,14 @@ const SettingsPage = ({
   useEffect(() => {
     setLocalGithubProxyPort(String(githubProxyConfig.port))
   }, [githubProxyConfig.port])
+  const [localGithubProxyUrl, setLocalGithubProxyUrl] = useState(
+    githubProxyConfig.url || `http://127.0.0.1:${githubProxyConfig.port}`,
+  )
+  useEffect(() => {
+    setLocalGithubProxyUrl(
+      githubProxyConfig.url || `http://127.0.0.1:${githubProxyConfig.port}`,
+    )
+  }, [githubProxyConfig.url, githubProxyConfig.port])
 
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>('idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
@@ -484,6 +494,27 @@ const SettingsPage = ({
                     ? t('networkProxyAutoDetected')
                     : t('networkProxyPortHint')}
                 </div>
+                <label className="settings-label" htmlFor="settings-github-proxy-url">
+                  {t('networkProxyUrl')}
+                </label>
+                <div className="settings-input-row">
+                  <input
+                    id="settings-github-proxy-url"
+                    className="settings-input mono"
+                    type="text"
+                    placeholder="http://127.0.0.1:7890"
+                    spellCheck={false}
+                    value={localGithubProxyUrl}
+                    onChange={(e) => setLocalGithubProxyUrl(e.target.value)}
+                    onBlur={() => {
+                      const nextUrl = localGithubProxyUrl.trim()
+                      if (nextUrl !== githubProxyConfig.url) {
+                        onGithubProxyUrlChange(nextUrl)
+                      }
+                    }}
+                  />
+                </div>
+                <div className="settings-helper">{t('networkProxyUrlHint')}</div>
               </div>
             </div>
             </section>

@@ -76,7 +76,8 @@ pub fn auto_detect_github_proxy_url() -> String {
 }
 
 pub fn app_http_client(proxy_url: &str, timeout_secs: Option<u64>) -> Result<Client> {
-    let mut builder = ClientBuilder::new();
+    let mut builder =
+        ClientBuilder::new().user_agent(concat!("skills-hub/", env!("CARGO_PKG_VERSION")));
     if let Some(secs) = timeout_secs {
         builder = builder.timeout(std::time::Duration::from_secs(secs));
     }

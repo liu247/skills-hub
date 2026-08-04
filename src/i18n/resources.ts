@@ -487,6 +487,9 @@ export const resources = {
         'Change this only if your local proxy uses another port.',
       networkProxyAutoDetected:
         'Detected local proxy port 7890 and enabled the network proxy automatically.',
+      networkProxyUrl: 'Proxy address (URL)',
+      networkProxyUrlHint:
+        'Full proxy URL including IP/domain and port, e.g. http://127.0.0.1:7897. Leave the port field for quick edits on localhost.',
       appUpdates: 'App updates',
       updateHint: 'Click “Check” to look for updates.',
       checkForUpdates: 'Check',
@@ -1294,6 +1297,9 @@ export const resources = {
         '只有本地代理使用其他端口时才需要修改。',
       networkProxyAutoDetected:
         '已检测到本地代理端口 7890，并自动开启网络代理。',
+      networkProxyUrl: '代理地址（URL）',
+      networkProxyUrlHint:
+        '完整的代理地址，含 IP/域名和端口，例如 http://127.0.0.1:7897。端口字段用于快速修改本机地址。',
       appUpdates: '应用更新',
       updateHint: '点击“检查更新”获取最新版本。',
       checkForUpdates: '检查更新',
