@@ -2130,13 +2130,39 @@ pub async fn parse_ai_source(
 ) -> Result<AiParsePlan, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        parse_source_with_ai(
+        let mut plan = parse_source_with_ai(
             &store,
             &LocalCredentialStore::from_store(&store)?,
             provider,
             &sourceUrl,
             expectedKind,
-        )
+        )?;
+        if matches!(plan.kind, AiPlanKind::Mcp) {
+            if let Some(mcp) = plan.mcp_plan.as_mut() {
+                let command = mcp.command.as_deref().unwrap_or_default();
+                let is_github_source = sourceUrl.starts_with("https://github.com/")
+                    || sourceUrl.starts_with("github.com/");
+                if mcp.cwd.is_none()
+                    && (command.starts_with("./") || command.starts_with("../"))
+                    && is_github_source
+                {
+                    match install_mcp_repo(&store, &sourceUrl) {
+                        Ok((install_dir, _)) => {
+                            log::info!(
+                                "AI MCP plan uses a repo-relative command; installed {} to {}",
+                                sourceUrl,
+                                install_dir.display()
+                            );
+                            mcp.cwd = Some(install_dir.to_string_lossy().into_owned());
+                        }
+                        Err(error) => {
+                            log::warn!("cannot install MCP repo for relative command: {error:#}");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(plan)
     })
     .await
     .map_err(|err| err.to_string())?

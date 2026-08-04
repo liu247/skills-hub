@@ -31,3 +31,6 @@ plans/
 
 bun.lock
 Skills-Hub-*.tar.gz
+
+# Local Reasonix session state
+.reasonix/

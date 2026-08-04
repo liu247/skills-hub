@@ -276,6 +276,23 @@ fn validate_http_url(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rewrites a GitHub repository page URL to its raw README so the AI parser
+/// receives compact plain text instead of a heavy HTML page (GitHub pages
+/// routinely exceed the parser size limit). Returns None for non-GitHub URLs.
+pub(crate) fn github_readme_url(source_url: &str) -> Option<String> {
+    let trimmed = source_url.trim().trim_end_matches('/');
+    let rest = trimmed.strip_prefix("https://github.com/")?;
+    let mut parts = rest.split('/');
+    let owner = parts.next().filter(|part| !part.is_empty())?;
+    let repo = parts.next().filter(|part| !part.is_empty())?;
+    if owner == "settings" || repo == "settings" {
+        return None;
+    }
+    Some(format!(
+        "https://raw.githubusercontent.com/{owner}/{repo}/HEAD/README.md"
+    ))
+}
+
 fn normalize_credential_reference(value: &str) -> Option<String> {
     if credential_name_from_reference(value).is_some() {
         return Some(value.to_string());
@@ -368,6 +385,44 @@ pub fn validate_ai_plan_json(value: &str) -> Result<AiParsePlan> {
                 anyhow::bail!("MCP AI plan cannot include skill_plan");
             }
             normalize_mcp_secret_references(mcp)?;
+            let normalized_name: String = mcp
+                .name
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_lowercase() || character.is_ascii_digit() {
+                        character
+                    } else if character.is_ascii_uppercase() {
+                        character.to_ascii_lowercase()
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>()
+                .split('-')
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
+            if normalized_name.is_empty() {
+                anyhow::bail!("MCP AI plan name is invalid");
+            }
+            if normalized_name != mcp.name {
+                plan.warnings.push(format!(
+                    "MCP server name was normalized to \"{normalized_name}\""
+                ));
+                mcp.name = normalized_name;
+            }
+            let supported_targets: Vec<String> = mcp
+                .recommended_targets
+                .iter()
+                .filter(|target| crate::core::tool_adapters::adapter_by_key(target).is_some())
+                .cloned()
+                .collect();
+            if supported_targets.len() != mcp.recommended_targets.len() {
+                plan.warnings.push(
+                    "Some recommended targets are not supported and were ignored".to_string(),
+                );
+                mcp.recommended_targets = supported_targets;
+            }
             let transport = match mcp.transport.as_str() {
                 "stdio" => McpTransport::Stdio,
                 "http" => McpTransport::Http,
@@ -407,31 +462,60 @@ fn fetch_source_text(source_url: &str) -> Result<String> {
         .user_agent("skills-hub-ai-parser/0.8")
         .build()
         .context("create source retrieval client")?;
-    let response = client
-        .get(source_url)
-        .send()
-        .context("retrieve source URL")?
-        .error_for_status()
-        .context("source URL returned an error")?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_SOURCE_BYTES)
-    {
-        anyhow::bail!("source content exceeds the AI parser size limit");
+    let fetch_url = github_readme_url(source_url).unwrap_or_else(|| source_url.to_string());
+    let mut candidates = vec![fetch_url.as_str()];
+    if fetch_url != source_url {
+        candidates.push(source_url);
     }
-    let mut body = Vec::new();
-    response
-        .take(MAX_SOURCE_BYTES + 1)
-        .read_to_end(&mut body)
-        .context("read source content")?;
-    if body.len() as u64 > MAX_SOURCE_BYTES {
-        anyhow::bail!("source content exceeds the AI parser size limit");
+    let mut last_error: Option<anyhow::Error> = None;
+    for candidate in candidates {
+        let response = match client
+            .get(candidate)
+            .send()
+            .and_then(|response| response.error_for_status())
+        {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(anyhow::anyhow!("{error}"));
+                continue;
+            }
+        };
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_SOURCE_BYTES)
+        {
+            last_error = Some(anyhow::anyhow!(
+                "source content exceeds the AI parser size limit"
+            ));
+            continue;
+        }
+        let mut body = Vec::new();
+        match response.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut body) {
+            Ok(_) => {}
+            Err(error) => {
+                last_error = Some(anyhow::anyhow!("read source content: {error}"));
+                continue;
+            }
+        }
+        if body.len() as u64 > MAX_SOURCE_BYTES {
+            last_error = Some(anyhow::anyhow!(
+                "source content exceeds the AI parser size limit"
+            ));
+            continue;
+        }
+        let text = String::from_utf8_lossy(&body).into_owned();
+        if text.trim().is_empty() {
+            last_error = Some(anyhow::anyhow!("source URL did not contain readable text"));
+            continue;
+        }
+        return Ok(text);
     }
-    let text = String::from_utf8_lossy(&body).into_owned();
-    if text.trim().is_empty() {
-        anyhow::bail!("source URL did not contain readable text");
-    }
-    Ok(text)
+    Err(anyhow::anyhow!(
+        "retrieve source URL: {}",
+        last_error
+            .map(|error| format!("{error:#}"))
+            .unwrap_or_else(|| "all source candidates failed".to_string())
+    ))
 }
 
 #[derive(Deserialize)]
@@ -566,6 +650,18 @@ pub fn normalize_ai_plan_json(
                 .or_insert_with(|| Value::String("AI parsed skill".to_string()));
         }
     }
+    if object.get("kind").and_then(Value::as_str) == Some("mcp") {
+        if let Some(mcp_plan) = object.get_mut("mcp_plan").and_then(Value::as_object_mut) {
+            let inferred_transport = if mcp_plan.contains_key("url") {
+                "http".to_string()
+            } else {
+                "stdio".to_string()
+            };
+            mcp_plan
+                .entry("transport")
+                .or_insert_with(|| Value::String(inferred_transport));
+        }
+    }
 
     let source = object.entry("source").or_insert_with(|| {
         serde_json::json!({ "url": fallback_source_url, "evidence": ["Source URL supplied by user."] })
@@ -645,7 +741,9 @@ For an MCP request, always use kind=mcp and include mcp_plan.\n\nAnalyse this so
                 .context("serialize fallback AI skill plan")?;
             validate_ai_plan_json(&fallback)
         }
-        Err(error) => Err(error),
+        Err(error) => Err(error).context(
+            "AI did not produce a valid MCP server configuration; verify the source describes an MCP server",
+        ),
     }
 }
 

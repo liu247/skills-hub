@@ -1,8 +1,8 @@
 use crate::core::ai_parser::{
-    get_provider_configs, normalize_ai_plan_json, save_provider_config, set_provider_api_key,
-    validate_ai_plan_json, AiProvider, AiProviderConfig,
+    get_provider_configs, normalize_ai_plan_json, parse_source_with_ai, save_provider_config,
+    set_provider_api_key, validate_ai_plan_json, AiPlanKind, AiProvider, AiProviderConfig,
 };
-use crate::core::credential_store::MemoryCredentialStore;
+use crate::core::credential_store::{LocalCredentialStore, MemoryCredentialStore};
 use crate::core::skill_store::SkillStore;
 
 fn make_store() -> (tempfile::TempDir, SkillStore) {
@@ -34,6 +34,65 @@ fn rejects_literal_secret_from_ai_mcp_plan() {
     )
     .expect_err("literal secret must be rejected");
     assert!(format!("{error:#}").contains("credential reference"));
+}
+
+#[test]
+fn normalizes_mcp_name_and_filters_unsupported_targets() {
+    let plan = validate_ai_plan_json(
+        r#"{
+          "protocol_version": "skills-hub-ai-plan/v2",
+          "kind": "mcp",
+          "summary": "MCP server",
+          "source": { "url": "https://example.com/mcp", "evidence": ["README"] },
+          "confidence": "high",
+          "warnings": [],
+          "mcp_plan": {
+            "name": "Tavily MCP!",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "tavily"],
+            "env": { "TAVILY_API_KEY": "${TAVILY_API_KEY}" },
+            "headers": {},
+            "recommended_targets": ["codex", "claude_code", "not-a-real-tool"]
+          }
+        }"#,
+    )
+    .expect("plan must validate");
+    let mcp = plan.mcp_plan.expect("mcp plan");
+    assert_eq!(mcp.name, "tavily-mcp");
+    assert_eq!(mcp.recommended_targets, ["codex", "claude_code"]);
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("normalized")));
+    assert!(plan
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("not supported")));
+}
+
+#[test]
+fn rejects_mcp_name_that_normalizes_to_empty() {
+    let error = validate_ai_plan_json(
+        r#"{
+          "protocol_version": "skills-hub-ai-plan/v2",
+          "kind": "mcp",
+          "summary": "MCP server",
+          "source": { "url": "https://example.com/mcp", "evidence": ["README"] },
+          "confidence": "high",
+          "warnings": [],
+          "mcp_plan": {
+            "name": "!!!",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "example"],
+            "env": {},
+            "headers": {}
+          }
+        }"#,
+    )
+    .expect_err("name must not normalize to empty");
+    assert!(format!("{error:#}").contains("name is invalid"));
 }
 
 #[test]
@@ -164,4 +223,68 @@ fn provider_config_roundtrip_never_exposes_api_key() {
     assert!(openai.has_api_key);
     assert_eq!(openai.model, "gpt-4.1-mini");
     assert!(!format!("{configs:?}").contains("secret-value"));
+}
+
+#[test]
+fn github_readme_url_rewrites_repo_pages_only() {
+    use crate::core::ai_parser::github_readme_url;
+    assert_eq!(
+        github_readme_url("https://github.com/microsoft/playwright-mcp").as_deref(),
+        Some("https://raw.githubusercontent.com/microsoft/playwright-mcp/HEAD/README.md")
+    );
+    assert_eq!(
+        github_readme_url("https://github.com/owner/repo/tree/main/packages/mcp").as_deref(),
+        Some("https://raw.githubusercontent.com/owner/repo/HEAD/README.md")
+    );
+    assert_eq!(
+        github_readme_url("https://github.com/owner/repo/blob/main/README.md").as_deref(),
+        Some("https://raw.githubusercontent.com/owner/repo/HEAD/README.md")
+    );
+    assert_eq!(github_readme_url("https://example.com/mcp"), None);
+    assert_eq!(
+        github_readme_url("https://github.com/settings/tokens"),
+        None
+    );
+    assert_eq!(github_readme_url("https://github.com/"), None);
+}
+
+/// Live smoke test: parses a real MCP repository README with the user's
+/// configured AI provider and real credentials from the app database.
+/// Run with: cargo test -- --ignored smoke_parse_real_mcp_source
+#[test]
+#[ignore = "live smoke test requiring a configured AI provider API key"]
+fn smoke_parse_real_mcp_source() {
+    let db_path =
+        "/Users/ywxklzd/Library/Application Support/com.qufei1993.skillshub/skills_hub.db";
+    if !std::path::Path::new(db_path).exists() {
+        eprintln!("SMOKE SKIP: app database not found at {db_path}");
+        return;
+    }
+    let store = SkillStore::new(db_path.into());
+    store.ensure_schema().expect("ensure schema");
+    let credentials = LocalCredentialStore::from_store(&store).expect("local credential store");
+    let source = "https://github.com/microsoft/playwright-mcp";
+    let plan = parse_source_with_ai(
+        &store,
+        &credentials,
+        AiProvider::DeepSeek,
+        source,
+        Some(AiPlanKind::Mcp),
+    )
+    .expect("live AI parse must succeed");
+    let mcp = plan.mcp_plan.expect("MCP plan");
+    println!(
+        "SMOKE OK: name={} transport={} command={:?} args={:?} cwd={:?} env={:?} headers={:?} targets={:?} warnings={:?} confidence={}",
+        mcp.name,
+        mcp.transport,
+        mcp.command,
+        mcp.args,
+        mcp.cwd,
+        mcp.env,
+        mcp.headers,
+        mcp.recommended_targets,
+        plan.warnings,
+        plan.confidence
+    );
+    assert!(!mcp.name.is_empty());
 }
