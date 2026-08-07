@@ -370,6 +370,22 @@ fn list_auto_update_skill_entries(store: &SkillStore) -> Result<Vec<AutoUpdateSk
         .list_skills()?
         .into_iter()
         .filter(|skill| skill.source_type == "git" || skill.source_type == "local")
+        .filter(|skill| skill.enabled)
+        .filter(|skill| {
+            // A local skill whose original source directory no longer exists
+            // has nothing to update from; skip it so auto-update does not
+            // report it as a failure on every run. Manual updates still fail
+            // loudly so the user knows the source is gone.
+            if skill.source_type == "local" {
+                skill
+                    .source_ref
+                    .as_deref()
+                    .map(|source| std::path::Path::new(source).exists())
+                    .unwrap_or(false)
+            } else {
+                true
+            }
+        })
         .map(|skill| AutoUpdateSkillProgress {
             skill_id: skill.id,
             name: skill.name,

@@ -108,6 +108,74 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
     (dir, store)
 }
 
+fn make_target_record(
+    skill_id: &str,
+    tool: &str,
+    target_path: &str,
+) -> crate::core::skill_store::SkillTargetRecord {
+    crate::core::skill_store::SkillTargetRecord {
+        id: format!("{skill_id}-{tool}"),
+        skill_id: skill_id.to_string(),
+        tool: tool.to_string(),
+        scope: "global".to_string(),
+        project_path: None,
+        target_path: target_path.to_string(),
+        mode: "symlink".to_string(),
+        status: "ok".to_string(),
+        last_error: None,
+        synced_at: None,
+    }
+}
+
+#[test]
+fn unsync_removes_db_target_record_even_when_target_path_is_missing() {
+    let (dir, store) = make_store();
+    // 与用户场景一致：local 技能，源目录已不存在，target_path 也已不存在。
+    let skill = SkillRecord {
+        id: "skill-1".to_string(),
+        name: "skill-1".to_string(),
+        description: None,
+        source_type: "local".to_string(),
+        source_ref: Some(
+            dir.path()
+                .join("missing-source")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        source_subpath: None,
+        source_revision: None,
+        central_path: dir.path().join("central").to_string_lossy().to_string(),
+        content_hash: None,
+        created_at: 1,
+        updated_at: 1,
+        last_sync_at: None,
+        last_seen_at: 1,
+        enabled: true,
+        status: "ok".to_string(),
+        collection: None,
+    };
+    store.upsert_skill(&skill).unwrap();
+    let missing_target = "/nonexistent/.codex/skills/skill-1";
+    store
+        .upsert_skill_target(&make_target_record("skill-1", "codex", missing_target))
+        .unwrap();
+    assert!(store
+        .get_skill_target("skill-1", "codex", "global", None)
+        .unwrap()
+        .is_some());
+
+    super::unsync_skill_from_tool_impl(&store, "skill-1", "codex", Some("global"), None)
+        .expect("unsync must succeed");
+
+    assert!(
+        store
+            .get_skill_target("skill-1", "codex", "global", None)
+            .unwrap()
+            .is_none(),
+        "DB target record must be removed even when target_path is missing"
+    );
+}
+
 #[test]
 fn format_anyhow_error_passthrough_prefixes() {
     let err = anyhow::anyhow!("MULTI_SKILLS|abc");

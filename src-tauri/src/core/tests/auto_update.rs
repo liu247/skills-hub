@@ -19,12 +19,16 @@ fn make_store() -> (tempfile::TempDir, SkillStore) {
 }
 
 fn make_skill(id: &str, source_type: &str, central_path: &str) -> SkillRecord {
+    // Create a real source directory so auto-update eligibility checks
+    // (which skip local skills whose source is missing) work in tests.
+    let source_ref = std::env::temp_dir().join(format!("skills-hub-test-source-{id}"));
+    std::fs::create_dir_all(&source_ref).ok();
     SkillRecord {
         id: id.to_string(),
         name: id.to_string(),
         description: None,
         source_type: source_type.to_string(),
-        source_ref: Some("/tmp/source".to_string()),
+        source_ref: Some(source_ref.to_string_lossy().into_owned()),
         source_subpath: None,
         source_revision: None,
         central_path: central_path.to_string(),
@@ -245,6 +249,36 @@ fn eligible_skills_include_git_and_local_sources() {
         ids,
         vec!["git-skill".to_string(), "local-skill".to_string()]
     );
+}
+
+#[test]
+fn local_skill_with_missing_source_is_excluded_from_auto_update() {
+    let (_dir, store) = make_store();
+    store
+        .upsert_skill(&make_skill("git-skill", "git", "/tmp/git-skill"))
+        .unwrap();
+    let mut orphan = make_skill("orphan-local", "local", "/tmp/orphan-local");
+    orphan.source_ref = Some("/nonexistent/orphan-source".to_string());
+    store.upsert_skill(&orphan).unwrap();
+
+    let ids = crate::core::auto_update::list_auto_update_skill_ids(&store).unwrap();
+
+    assert_eq!(ids, vec!["git-skill".to_string()]);
+}
+
+#[test]
+fn disabled_skill_is_excluded_from_auto_update() {
+    let (_dir, store) = make_store();
+    let mut disabled = make_skill("disabled-local", "local", "/tmp/disabled-local");
+    disabled.enabled = false;
+    store.upsert_skill(&disabled).unwrap();
+    store
+        .upsert_skill(&make_skill("git-skill", "git", "/tmp/git-skill"))
+        .unwrap();
+
+    let ids = crate::core::auto_update::list_auto_update_skill_ids(&store).unwrap();
+
+    assert_eq!(ids, vec!["git-skill".to_string()]);
 }
 
 #[test]

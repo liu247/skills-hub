@@ -1833,69 +1833,81 @@ pub async fn unsync_skill_from_tool(
 ) -> Result<(), String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let scope = normalize_scope(scope.as_deref())?;
-        let project_path = if scope == "project" {
-            let raw = projectPath
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("projectPath is required for project scope"))?;
-            Some(expand_home_path(raw)?.to_string_lossy().to_string())
-        } else {
-            None
-        };
-
-        // Some tools share the same skills directory; unsync should update all of them.
-        let group_tool_keys: Vec<String> =
-            if let Ok(runtime_tool) = runtime_tool_by_key(&store, &tool) {
-                runtime_tools_sharing_dir(&store, &runtime_tool, scope)?
-                    .into_iter()
-                    .map(|tool| tool.key)
-                    .collect()
-            } else if let Some(adapter) = adapter_by_key(&tool) {
-                let group = if scope == "project" {
-                    adapters_sharing_project_skills_dir(&adapter)
-                } else {
-                    crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter)
-                };
-                // If none of the group tools are installed, do nothing (treat as already not effective).
-                if scope == "global" {
-                    let mut any_installed = false;
-                    for a in &group {
-                        if is_tool_installed(a)? {
-                            any_installed = true;
-                            break;
-                        }
-                    }
-                    if !any_installed {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-                }
-                group
-                    .into_iter()
-                    .map(|a| a.id.as_key().to_string())
-                    .collect()
-            } else {
-                vec![tool.clone()]
-            };
-
-        // Remove filesystem target once (shared dir => shared target path).
-        let mut removed = false;
-        for k in &group_tool_keys {
-            if let Some(target) =
-                store.get_skill_target(&skillId, k, scope, project_path.as_deref())?
-            {
-                if !removed {
-                    remove_path_any(&target.target_path).map_err(anyhow::Error::msg)?;
-                    removed = true;
-                }
-                store.delete_skill_target(&skillId, k, scope, project_path.as_deref())?;
-            }
-        }
-
-        Ok::<_, anyhow::Error>(())
+        unsync_skill_from_tool_impl(
+            &store,
+            &skillId,
+            &tool,
+            scope.as_deref(),
+            projectPath.as_deref(),
+        )
     })
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+fn unsync_skill_from_tool_impl(
+    store: &SkillStore,
+    skill_id: &str,
+    tool: &str,
+    scope: Option<&str>,
+    project_path: Option<&str>,
+) -> anyhow::Result<()> {
+    let scope = normalize_scope(scope)?;
+    let project_path = if scope == "project" {
+        let raw = project_path
+            .ok_or_else(|| anyhow::anyhow!("projectPath is required for project scope"))?;
+        Some(expand_home_path(raw)?.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    // Some tools share the same skills directory; unsync should update all of them.
+    let group_tool_keys: Vec<String> = if let Ok(runtime_tool) = runtime_tool_by_key(store, tool) {
+        runtime_tools_sharing_dir(store, &runtime_tool, scope)?
+            .into_iter()
+            .map(|tool| tool.key)
+            .collect()
+    } else if let Some(adapter) = adapter_by_key(tool) {
+        let group = if scope == "project" {
+            adapters_sharing_project_skills_dir(&adapter)
+        } else {
+            crate::core::tool_adapters::adapters_sharing_skills_dir(&adapter)
+        };
+        // If none of the group tools are installed, do nothing (treat as already not effective).
+        if scope == "global" {
+            let mut any_installed = false;
+            for a in &group {
+                if is_tool_installed(a)? {
+                    any_installed = true;
+                    break;
+                }
+            }
+            if !any_installed {
+                return Ok(());
+            }
+        }
+        group
+            .into_iter()
+            .map(|a| a.id.as_key().to_string())
+            .collect()
+    } else {
+        vec![tool.to_string()]
+    };
+
+    // Remove filesystem target once (shared dir => shared target path).
+    let mut removed = false;
+    for k in &group_tool_keys {
+        if let Some(target) = store.get_skill_target(skill_id, k, scope, project_path.as_deref())? {
+            if !removed {
+                remove_path_any(&target.target_path).map_err(anyhow::Error::msg)?;
+                removed = true;
+            }
+            store.delete_skill_target(skill_id, k, scope, project_path.as_deref())?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
