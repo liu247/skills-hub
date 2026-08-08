@@ -272,6 +272,89 @@ fn smoke_sync_global_env_all_tools() {
 }
 
 #[test]
+fn execute_mcp_install_skips_autofetch_and_unsupported_installers() {
+    use crate::core::ai_parser::McpInstallPlan;
+    // npx/uvx auto-fetch at runtime -> nothing to preinstall
+    let mut plan = McpInstallPlan {
+        tool: "npx".to_string(),
+        packages: vec!["@some/mcp".to_string()],
+        evidence: String::new(),
+        status: "pending".to_string(),
+        detail: None,
+    };
+    super::execute_mcp_install(&mut plan);
+    assert_eq!(plan.status, "skipped");
+
+    // unsupported installer -> skipped with reason
+    let mut plan = McpInstallPlan {
+        tool: "brew".to_string(),
+        packages: vec!["zhipu-image-mcp".to_string()],
+        evidence: String::new(),
+        status: "pending".to_string(),
+        detail: None,
+    };
+    super::execute_mcp_install(&mut plan);
+    assert_eq!(plan.status, "skipped");
+    assert!(plan.detail.unwrap_or_default().contains("unsupported"));
+
+    // no packages named -> skipped
+    let mut plan = McpInstallPlan {
+        tool: "pip".to_string(),
+        packages: vec![],
+        evidence: String::new(),
+        status: "pending".to_string(),
+        detail: None,
+    };
+    super::execute_mcp_install(&mut plan);
+    assert_eq!(plan.status, "skipped");
+    assert!(plan.detail.unwrap_or_default().contains("no packages"));
+}
+
+/// Live smoke: AI-parses the zhipu-image MCP repo and auto-installs its
+/// runtime dependencies (whitelisted pip install to the base environment).
+/// Run with: cargo test -- --ignored smoke_parse_zhipu_image_install
+#[test]
+#[ignore = "live smoke test that installs packages and calls the AI provider"]
+fn smoke_parse_zhipu_image_install() {
+    let db_path =
+        "/Users/ywxklzd/Library/Application Support/com.qufei1993.skillshub/skills_hub.db";
+    if !std::path::Path::new(db_path).exists() {
+        eprintln!("SMOKE SKIP: app database not found");
+        return;
+    }
+    let store = SkillStore::new(db_path.into());
+    store.ensure_schema().expect("ensure schema");
+    let plan = super::parse_ai_source_impl(
+        &store,
+        crate::core::ai_parser::AiProvider::DeepSeek,
+        "https://github.com/liu247/zhipu-image",
+        Some(crate::core::ai_parser::AiPlanKind::Mcp),
+    )
+    .expect("live parse must succeed");
+    let mcp = plan.mcp_plan.expect("MCP plan");
+    println!(
+        "SMOKE zhipu-image: name={} command={:?} args={:?} runtime={:?}",
+        mcp.name, mcp.command, mcp.args, mcp.runtime
+    );
+    match &mcp.install {
+        Some(install) => {
+            println!(
+                "SMOKE install: tool={} packages={:?} status={} detail={:?}",
+                install.tool, install.packages, install.status, install.detail
+            );
+            assert!(
+                !install.packages.is_empty(),
+                "install plan must name packages"
+            );
+            // In the root test environment macOS TCC blocks pip inside
+            // miniconda3; the app itself runs as the user and installs fine.
+            // The point of this smoke test is the AI recognition + whitelist.
+        }
+        None => println!("SMOKE install: none (model did not request an install)"),
+    }
+}
+
+#[test]
 fn unsync_removes_db_target_record_even_when_target_path_is_missing() {
     let (dir, store) = make_store();
     // 与用户场景一致：local 技能，源目录已不存在，target_path 也已不存在。

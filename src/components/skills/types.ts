@@ -291,6 +291,14 @@ export type AiParsePlanDto = {
     env: Record<string, string>
     headers: Record<string, string>
     recommended_targets: string[]
+    runtime?: string | null
+    install?: {
+      tool: string
+      packages: string[]
+      evidence: string
+      status: 'pending' | 'installed' | 'failed' | 'skipped'
+      detail?: string | null
+    } | null
   } | null
 }
 

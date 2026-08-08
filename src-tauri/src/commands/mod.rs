@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::core::ai_parser::{
     delete_provider_api_key, get_provider_configs, parse_source_with_ai, save_provider_config,
     set_provider_api_key, test_provider_connection, AiParsePlan, AiPlanKind, AiProvider,
-    AiProviderConfig, AiProviderConfigStatus, AiSkillParameter,
+    AiProviderConfig, AiProviderConfigStatus, AiSkillParameter, McpInstallPlan,
 };
 use crate::core::auto_update::{
     get_auto_update_config as get_auto_update_config_core, record_auto_update_triggered,
@@ -2155,6 +2155,98 @@ pub async fn delete_ai_provider_api_key(
     .map_err(format_anyhow_error)
 }
 
+/// Executes an AI-parsed runtime install plan with a whitelisted installer.
+/// Python defaults to the base environment (`python3 -m pip install`); npx/uvx
+/// auto-fetch at runtime so no preinstall is needed.
+fn execute_mcp_install(install: &mut McpInstallPlan) {
+    use std::process::Command;
+    let mut command = match install.tool.as_str() {
+        "pip" => Some(Command::new("python3")),
+        "uv" => Some(Command::new("uv")),
+        "npm" => Some(Command::new("npm")),
+        "go" => Some(Command::new("go")),
+        "npx" | "uvx" | "" => None,
+        other => {
+            install.status = "skipped".to_string();
+            install.detail = Some(format!("unsupported installer: {other}"));
+            return;
+        }
+    };
+    if install.packages.is_empty() {
+        install.status = "skipped".to_string();
+        install.detail = Some("no packages named".to_string());
+        return;
+    }
+    let mut command = match command.take() {
+        Some(command) => command,
+        None => {
+            install.status = "skipped".to_string();
+            install.detail = Some("npx/uvx fetch at runtime; nothing to preinstall".to_string());
+            return;
+        }
+    };
+    match install.tool.as_str() {
+        "pip" => {
+            command
+                .args(["-m", "pip", "install", "--upgrade"])
+                .args(&install.packages);
+        }
+        "uv" => {
+            command.args(["tool", "install"]).args(&install.packages);
+        }
+        "npm" => {
+            command.args(["install", "-g"]).args(&install.packages);
+        }
+        "go" => {
+            for pkg in &install.packages {
+                command.arg(format!("{pkg}@latest"));
+            }
+        }
+        _ => {}
+    }
+    let output = command.output();
+    match output {
+        Ok(out) if out.status.success() => {
+            install.status = "installed".to_string();
+            let tail = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            install.detail = Some(if tail.trim().is_empty() {
+                "installed".to_string()
+            } else {
+                tail
+            });
+        }
+        Ok(out) => {
+            install.status = "failed".to_string();
+            let tail = String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .rev()
+                .take(6)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            install.detail = Some(if tail.trim().is_empty() {
+                "install failed".to_string()
+            } else {
+                tail
+            });
+        }
+        Err(err) => {
+            install.status = "failed".to_string();
+            install.detail = Some(format!("{err}"));
+        }
+    }
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn parse_ai_source(
@@ -2165,43 +2257,65 @@ pub async fn parse_ai_source(
 ) -> Result<AiParsePlan, String> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut plan = parse_source_with_ai(
-            &store,
-            &LocalCredentialStore::from_store(&store)?,
-            provider,
-            &sourceUrl,
-            expectedKind,
-        )?;
-        if matches!(plan.kind, AiPlanKind::Mcp) {
-            if let Some(mcp) = plan.mcp_plan.as_mut() {
-                let command = mcp.command.as_deref().unwrap_or_default();
-                let is_github_source = sourceUrl.starts_with("https://github.com/")
-                    || sourceUrl.starts_with("github.com/");
-                if mcp.cwd.is_none()
-                    && (command.starts_with("./") || command.starts_with("../"))
-                    && is_github_source
-                {
-                    match install_mcp_repo(&store, &sourceUrl) {
-                        Ok((install_dir, _)) => {
-                            log::info!(
-                                "AI MCP plan uses a repo-relative command; installed {} to {}",
-                                sourceUrl,
-                                install_dir.display()
-                            );
-                            mcp.cwd = Some(install_dir.to_string_lossy().into_owned());
-                        }
-                        Err(error) => {
-                            log::warn!("cannot install MCP repo for relative command: {error:#}");
-                        }
-                    }
-                }
-            }
-        }
-        Ok(plan)
+        parse_ai_source_impl(&store, provider, &sourceUrl, expectedKind)
     })
     .await
     .map_err(|err| err.to_string())?
     .map_err(format_anyhow_error)
+}
+
+fn parse_ai_source_impl(
+    store: &SkillStore,
+    provider: AiProvider,
+    source_url: &str,
+    expected_kind: Option<AiPlanKind>,
+) -> anyhow::Result<AiParsePlan> {
+    let mut plan = parse_source_with_ai(
+        store,
+        &LocalCredentialStore::from_store(store)?,
+        provider,
+        source_url,
+        expected_kind,
+    )?;
+    if matches!(plan.kind, AiPlanKind::Mcp) {
+        if let Some(mcp) = plan.mcp_plan.as_mut() {
+            let command = mcp.command.as_deref().unwrap_or_default();
+            let is_github_source = source_url.starts_with("https://github.com/")
+                || source_url.starts_with("github.com/");
+            if mcp.cwd.is_none()
+                && (command.starts_with("./") || command.starts_with("../"))
+                && is_github_source
+            {
+                match install_mcp_repo(store, source_url) {
+                    Ok((install_dir, _)) => {
+                        log::info!(
+                            "AI MCP plan uses a repo-relative command; installed {} to {}",
+                            source_url,
+                            install_dir.display()
+                        );
+                        mcp.cwd = Some(install_dir.to_string_lossy().into_owned());
+                    }
+                    Err(error) => {
+                        log::warn!("cannot install MCP repo for relative command: {error:#}");
+                    }
+                }
+            }
+            // Auto-install the parsed runtime dependencies (whitelisted
+            // installer + package list; python goes to the base env).
+            if let Some(install) = mcp.install.as_mut() {
+                if install.status.is_empty() || install.status == "pending" {
+                    execute_mcp_install(install);
+                    log::info!(
+                        "MCP runtime install {} -> {:?} ({:?})",
+                        install.tool,
+                        install.status,
+                        install.packages
+                    );
+                }
+            }
+        }
+    }
+    Ok(plan)
 }
 
 #[tauri::command]
