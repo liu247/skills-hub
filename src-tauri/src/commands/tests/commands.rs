@@ -171,10 +171,63 @@ fn materialize_collection_env_writes_repo_root_env_for_repo_layout_scripts() {
     let skill_env = std::fs::read_to_string(skill_dir.join(".env")).unwrap();
     assert!(skill_env.contains("SN_API_KEY=secret-value"));
 
-    // repo_root 位置的 .env（脚本实际查找位置 = <skill_dir>.parent().parent()）
+    // parent 层（parents[2] 布局的 repo_root）
+    let parent_env = std::fs::read_to_string(central.join(".env")).unwrap();
+    assert!(parent_env.contains("SN_API_KEY=secret-value"));
+
+    // parent.parent 层（parents[3] 布局的 repo_root，如 ~/.env）
     let repo_env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
     assert!(repo_env.contains("SN_API_KEY=secret-value"));
-    assert!(repo_env.contains("Skills Hub managed parameters"));
+    assert!(repo_env.contains("Skills Hub managed parameters: TestCollection"));
+}
+
+#[test]
+fn materialize_collection_env_keeps_multiple_collections_in_shared_env() {
+    let (dir, store) = make_store();
+    let skill_dir = dir.path().join("central").join("skill-a");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    for (id, collection) in [("skill-a", "CollA"), ("skill-b", "CollB")] {
+        let skill_dir = dir.path().join("central").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let skill = SkillRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            source_type: "git".to_string(),
+            source_ref: None,
+            source_subpath: None,
+            source_revision: None,
+            central_path: skill_dir.to_string_lossy().to_string(),
+            content_hash: None,
+            created_at: 1,
+            updated_at: 1,
+            last_sync_at: None,
+            last_seen_at: 1,
+            enabled: true,
+            status: "ok".to_string(),
+            collection: Some(collection.to_string()),
+        };
+        store.upsert_skill(&skill).unwrap();
+        store
+            .upsert_collection_parameter(collection, "KEY_A", "k", false, Some("value-a"))
+            .unwrap();
+        store
+            .upsert_collection_parameter(collection, "KEY_B", "k", false, Some("value-b"))
+            .unwrap();
+        super::materialize_collection_env(&store, &MemoryCredentialStore::default(), collection)
+            .expect("materialize env");
+    }
+
+    // 同一共享 repo_root .env 应同时含两个集合的 key（marker 按集合隔离）
+    let shared = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert!(shared.contains("KEY_A=value-a"));
+    assert!(shared.contains("KEY_B=value-b"));
+    assert_eq!(
+        shared
+            .matches("# >>> Skills Hub managed parameters:")
+            .count(),
+        2
+    );
 }
 
 #[test]

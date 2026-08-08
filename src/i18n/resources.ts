@@ -677,6 +677,8 @@ export const resources = {
         toolNotInstalled: 'The selected tool is not installed. Please refresh and retry.',
         toolNotWritable:
           'Cannot sync to {{tool}}: permission denied on {{path}}. Please check directory permissions or run as administrator.',
+        envConflict:
+          'Environment variable “{{key}}” already exists in {{tool}} with a different value (collection: {{collection}}). Remove it from the tool config or rename the parameter before activating.',
         noSkillsFoundInRepo: 'No skills found in this repository.',
         requireLocalPath: 'Please enter a local path.',
         requireGitUrl: 'Please enter a Git repository URL.',
@@ -1477,6 +1479,8 @@ export const resources = {
         toolNotInstalled: '未检测到该工具已安装，请刷新后重试。',
         toolNotWritable:
           '无法同步到 {{tool}}：目录 {{path}} 权限不足。请检查目录权限或以管理员身份运行。',
+        envConflict:
+          '环境变量 “{{key}}” 在 {{tool}} 中已存在且值不同（集合：{{collection}}）。请在工具配置中移除它或重命名参数后再激活。',
         noSkillsFoundInRepo: '该仓库未发现可导入的 Skills。',
         requireLocalPath: '请输入本地路径',
         requireGitUrl: '请输入 Git 仓库地址',

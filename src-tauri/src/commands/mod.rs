@@ -55,6 +55,11 @@ use crate::core::network_proxy::{
     set_github_proxy_url as set_github_proxy_url_core, GithubProxyConfig,
 };
 use crate::core::onboarding::{build_onboarding_plan, OnboardingPlan};
+use crate::core::tool_env::{
+    global_env_config_for, read_global_env, remove_global_env, write_global_env,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::core::skill_store::{
     McpSecretRefRecord, McpServerRecord, McpServerTargetRecord, SkillStore, SkillTargetRecord,
 };
@@ -1774,11 +1779,11 @@ pub async fn sync_skill_to_tool(
 
         // Some tools share the same skills directory; keep DB records consistent across them.
         let group = runtime_tools_sharing_dir(&store, &runtime_tool, scope)?;
-        for a in group {
+        for a in &group {
             let record = SkillTargetRecord {
                 id: Uuid::new_v4().to_string(),
                 skill_id: skillId.clone(),
-                tool: a.key,
+                tool: a.key.clone(),
                 scope: scope.to_string(),
                 project_path: project_path_for_record.clone(),
                 target_path: result.target_path.to_string_lossy().to_string(),
@@ -1795,6 +1800,15 @@ pub async fn sync_skill_to_tool(
             };
             store.upsert_skill_target(&record)?;
         }
+
+        // Write the collection env into the tool's global env config so skill
+        // scripts see the keys via os.environ (industry-standard approach).
+        for a in &group {
+            if let Err(err) = sync_tool_global_env(&store, &a.key) {
+                log::warn!("sync global env for {}: {err:#}", a.key);
+            }
+        }
+        sync_tool_global_env(&store, &tool)?;
 
         Ok::<_, anyhow::Error>(SyncResultDto {
             mode_used: match result.mode_used {
@@ -1906,6 +1920,15 @@ fn unsync_skill_from_tool_impl(
             store.delete_skill_target(skill_id, k, scope, project_path.as_deref())?;
         }
     }
+
+    // Drop the collection env from the tool's global env config once no
+    // activated skill uses that collection anymore.
+    for k in &group_tool_keys {
+        if let Err(err) = unsync_tool_global_env(store, k) {
+            log::warn!("unsync global env for {}: {err:#}", k);
+        }
+    }
+    unsync_tool_global_env(store, tool)?;
 
     Ok(())
 }
@@ -2619,6 +2642,172 @@ fn collection_credential_owner(collection_name: &str) -> String {
     format!("collection:{}", collection_name.trim())
 }
 
+const TOOL_GLOBAL_ENV_COLLECTIONS_PREFIX: &str = "tool_global_env_v1.collections.";
+
+fn tool_env_collections_key(tool_key: &str) -> String {
+    format!("{TOOL_GLOBAL_ENV_COLLECTIONS_PREFIX}{tool_key}")
+}
+
+fn tool_env_keys_key(tool_key: &str, collection: &str) -> String {
+    format!("{TOOL_GLOBAL_ENV_COLLECTIONS_PREFIX}{tool_key}.{collection}")
+}
+
+fn read_string_list(store: &SkillStore, key: &str) -> anyhow::Result<Vec<String>> {
+    Ok(store
+        .get_setting(key)?
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
+}
+
+fn managed_env_keys(
+    store: &SkillStore,
+    tool_key: &str,
+    collection: &str,
+) -> anyhow::Result<Vec<String>> {
+    read_string_list(store, &tool_env_keys_key(tool_key, collection))
+}
+
+fn set_managed_env_keys(
+    store: &SkillStore,
+    tool_key: &str,
+    collection: &str,
+    keys: &[String],
+) -> anyhow::Result<()> {
+    store.set_setting(
+        &tool_env_keys_key(tool_key, collection),
+        &serde_json::to_string(keys)?,
+    )
+}
+
+/// Collections whose skills are currently activated (global, non-disabled)
+/// for the given tool.
+fn active_collections_for_tool(
+    store: &SkillStore,
+    tool_key: &str,
+) -> anyhow::Result<BTreeSet<String>> {
+    let mut collections = BTreeSet::new();
+    for skill in store.list_skills()? {
+        let Some(collection) = skill.collection.clone() else {
+            continue;
+        };
+        for target in store.list_skill_targets(&skill.id)? {
+            if target.tool == tool_key && target.scope == "global" && target.status != "disabled" {
+                collections.insert(collection);
+                break;
+            }
+        }
+    }
+    Ok(collections)
+}
+
+fn collection_env_map(
+    store: &SkillStore,
+    credentials: &dyn CredentialStore,
+    collection: &str,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let owner = collection_credential_owner(collection);
+    let mut map = BTreeMap::new();
+    for parameter in store.list_collection_parameters(collection)? {
+        let value = if parameter.is_sensitive {
+            credentials.get(&owner, &parameter.name)?
+        } else {
+            parameter.plain_value
+        };
+        if let Some(value) = value {
+            map.insert(parameter.name, value);
+        }
+    }
+    Ok(map)
+}
+
+/// Applies the env of every active collection of `tool_key` to the tool's
+/// global env config. Fails with `ENV_CONFLICT|<tool>|<key>|<collection>`
+/// when an existing key (not previously managed by Skills Hub) has a
+/// different value.
+fn sync_tool_global_env(store: &SkillStore, tool_key: &str) -> anyhow::Result<()> {
+    let Some(config) = global_env_config_for(tool_key) else {
+        return Ok(());
+    };
+    let collections = active_collections_for_tool(store, tool_key)?;
+    if collections.is_empty() {
+        return Ok(());
+    }
+    let credentials = LocalCredentialStore::from_store(store)?;
+    let mut managed = BTreeMap::new();
+    for collection in &collections {
+        managed.extend(collection_env_map(store, &credentials, collection)?);
+    }
+    if managed.is_empty() {
+        return Ok(());
+    }
+    let mut already_managed: Vec<String> = Vec::new();
+    for collection in &collections {
+        already_managed.extend(managed_env_keys(store, tool_key, collection)?);
+    }
+    let existing = read_global_env(&config)?;
+    for (key, value) in &managed {
+        if let Some(previous) = existing.get(key) {
+            if !already_managed.contains(key) && previous != value {
+                let collection = collections
+                    .iter()
+                    .find(|collection| {
+                        collection_env_map(store, &credentials, collection)
+                            .map(|map| map.contains_key(key))
+                            .unwrap_or(false)
+                    })
+                    .cloned()
+                    .unwrap_or_default();
+                anyhow::bail!("ENV_CONFLICT|{}|{}|{}", tool_key, key, collection);
+            }
+        }
+    }
+    write_global_env(&config, &managed)?;
+    for collection in &collections {
+        let keys: Vec<String> = collection_env_map(store, &credentials, collection)?
+            .into_keys()
+            .collect();
+        set_managed_env_keys(store, tool_key, collection, &keys)?;
+    }
+    let mut recorded = read_string_list(store, &tool_env_collections_key(tool_key))?;
+    for collection in &collections {
+        if !recorded.contains(collection) {
+            recorded.push(collection.clone());
+        }
+    }
+    store.set_setting(
+        &tool_env_collections_key(tool_key),
+        &serde_json::to_string(&recorded)?,
+    )?;
+    Ok(())
+}
+
+/// Removes from the tool's global env config every collection that no longer
+/// has an activated skill for that tool.
+fn unsync_tool_global_env(store: &SkillStore, tool_key: &str) -> anyhow::Result<()> {
+    let Some(config) = global_env_config_for(tool_key) else {
+        return Ok(());
+    };
+    let active = active_collections_for_tool(store, tool_key)?;
+    let recorded = read_string_list(store, &tool_env_collections_key(tool_key))?;
+    let mut remaining = Vec::new();
+    for collection in recorded {
+        if active.contains(&collection) {
+            remaining.push(collection);
+            continue;
+        }
+        let keys = managed_env_keys(store, tool_key, &collection)?;
+        if !keys.is_empty() {
+            remove_global_env(&config, &keys)?;
+        }
+        store.set_setting(&tool_env_keys_key(tool_key, &collection), "[]")?;
+    }
+    store.set_setting(
+        &tool_env_collections_key(tool_key),
+        &serde_json::to_string(&remaining)?,
+    )?;
+    Ok(())
+}
+
 fn materialize_collection_env(
     store: &SkillStore,
     credentials: &dyn CredentialStore,
@@ -2637,34 +2826,40 @@ fn materialize_collection_env(
             lines.push(format!("{}={}", parameter.name, value));
         }
     }
-    let marker_start = "# >>> Skills Hub managed parameters >>>";
-    let marker_end = "# <<< Skills Hub managed parameters <<<";
+    let marker_start = format!("# >>> Skills Hub managed parameters: {collection_name} >>>");
+    let marker_end = format!("# <<< Skills Hub managed parameters: {collection_name} <<<");
     let block = format!("{marker_start}\n{}\n{marker_end}\n", lines.join("\n"));
     let mut extra_env_paths: Vec<std::path::PathBuf> = Vec::new();
+    // Scripts resolve their repo root at different depths
+    // (Path(__file__).parents[1] / [2] / [3]); write the managed block at
+    // each ancestor so every layout can discover it via python-dotenv.
+    let ancestor_env_paths = |skill_or_target_dir: &std::path::Path| -> Vec<std::path::PathBuf> {
+        let mut paths = Vec::new();
+        if let Some(parent) = skill_or_target_dir.parent() {
+            paths.push(parent.join(".env"));
+        }
+        if let Some(grandparent) = skill_or_target_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+        {
+            paths.push(grandparent.join(".env"));
+        }
+        paths
+    };
     for skill in store
         .list_skills()?
         .into_iter()
         .filter(|skill| skill.collection.as_deref() == Some(collection_name))
     {
         let path = std::path::Path::new(&skill.central_path).join(".env");
-        write_managed_env_block(&path, &block, marker_start, marker_end)?;
-        // Skill scripts written for a repository layout (e.g. SenseNova
-        // skills) resolve their repo root as `<dir>.parent().parent()` and
-        // look for `.env` there (not inside the skill folder). Write a copy
-        // to that location so `os.environ` / python-dotenv can see the keys.
-        if let Some(repo_root) = std::path::Path::new(&skill.central_path)
-            .parent()
-            .and_then(std::path::Path::parent)
-        {
-            extra_env_paths.push(repo_root.join(".env"));
-        }
+        write_managed_env_block(&path, &block, &marker_start, &marker_end)?;
+        extra_env_paths.extend(ancestor_env_paths(std::path::Path::new(
+            &skill.central_path,
+        )));
         for target in store.list_skill_targets(&skill.id)? {
-            if let Some(repo_root) = std::path::Path::new(&target.target_path)
-                .parent()
-                .and_then(std::path::Path::parent)
-            {
-                extra_env_paths.push(repo_root.join(".env"));
-            }
+            extra_env_paths.extend(ancestor_env_paths(std::path::Path::new(
+                &target.target_path,
+            )));
             let mode = match target.mode.as_str() {
                 "copy" => SyncMode::Copy,
                 "symlink" => SyncMode::Symlink,
@@ -2684,7 +2879,22 @@ fn materialize_collection_env(
         if !seen.insert(extra.clone()) {
             continue;
         }
-        write_managed_env_block(&extra, &block, marker_start, marker_end)?;
+        write_managed_env_block(&extra, &block, &marker_start, &marker_end)?;
+    }
+    // Keep each tool's global env config in sync with the collection env.
+    let mut affected_tools = BTreeSet::new();
+    for skill in store.list_skills()? {
+        if skill.collection.as_deref() != Some(collection_name) {
+            continue;
+        }
+        for target in store.list_skill_targets(&skill.id)? {
+            affected_tools.insert(target.tool);
+        }
+    }
+    for tool_key in affected_tools {
+        if let Err(err) = sync_tool_global_env(store, &tool_key) {
+            log::warn!("sync global env for {}: {err:#}", tool_key);
+        }
     }
     Ok(())
 }

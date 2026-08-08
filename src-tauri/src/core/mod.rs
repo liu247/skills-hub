@@ -24,6 +24,7 @@ pub mod sync_engine;
 pub mod system_scheduler;
 pub mod temp_cleanup;
 pub mod tool_adapters;
+pub mod tool_env;
 
 #[cfg(test)]
 #[path = "tests/mcp.rs"]
@@ -52,3 +53,7 @@ mod mcp_adapters_tests;
 #[cfg(test)]
 #[path = "tests/ai_parser.rs"]
 mod ai_parser_tests;
+
+#[cfg(test)]
+#[path = "tests/tool_env.rs"]
+mod tool_env_tests;

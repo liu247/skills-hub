@@ -3637,6 +3637,16 @@ function App() {
         } else if (raw.startsWith('TOOL_NOT_WRITABLE|')) {
           const parts = raw.split('|')
           setError(t('errors.toolNotWritable', { tool: parts[1] ?? '', path: parts[2] ?? '' }))
+        } else if (raw.startsWith('ENV_CONFLICT|')) {
+          const parts = raw.split('|')
+          const toolLabel = tools.find((t) => t.id === parts[1])?.label ?? parts[1] ?? ''
+          setError(
+            t('errors.envConflict', {
+              tool: toolLabel,
+              key: parts[2] ?? '',
+              collection: parts[3] ?? '',
+            }),
+          )
         } else {
           setError(raw)
         }
