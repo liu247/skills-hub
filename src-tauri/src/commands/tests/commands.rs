@@ -230,6 +230,34 @@ fn materialize_collection_env_keeps_multiple_collections_in_shared_env() {
     );
 }
 
+/// Live smoke test: syncs the real collection env into the real
+/// ~/.claude/settings.json `env` map and verifies the script-facing lookup.
+/// Run with: cargo test -- --ignored smoke_sync_global_env_to_claude
+#[test]
+#[ignore = "live smoke test that writes the real claude settings"]
+fn smoke_sync_global_env_to_claude() {
+    let db_path =
+        "/Users/ywxklzd/Library/Application Support/com.qufei1993.skillshub/skills_hub.db";
+    if !std::path::Path::new(db_path).exists() {
+        eprintln!("SMOKE SKIP: app database not found");
+        return;
+    }
+    let store = SkillStore::new(db_path.into());
+    store.ensure_schema().expect("ensure schema");
+    super::sync_tool_global_env(&store, "claude_code").expect("sync global env");
+    let settings = std::fs::read_to_string(
+        dirs::home_dir()
+            .expect("home")
+            .join(".claude/settings.json"),
+    )
+    .expect("read claude settings");
+    assert!(
+        settings.contains("SN_API_KEY"),
+        "SN_API_KEY must be written into ~/.claude/settings.json env"
+    );
+    println!("SMOKE OK: SN_API_KEY present in claude settings env");
+}
+
 #[test]
 fn unsync_removes_db_target_record_even_when_target_path_is_missing() {
     let (dir, store) = make_store();
