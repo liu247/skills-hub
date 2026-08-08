@@ -2155,13 +2155,35 @@ pub async fn delete_ai_provider_api_key(
     .map_err(format_anyhow_error)
 }
 
+/// Resolves the interpreter used for "python base environment" installs:
+/// prefers a conda/miniconda base under the user's home (the de-facto base
+/// env on most macOS setups), falling back to PATH `python3`.
+fn resolve_base_python() -> std::ffi::OsString {
+    if let Some(home) = dirs::home_dir() {
+        for relative in [
+            "miniconda3/bin/python3",
+            "miniconda/bin/python3",
+            "anaconda3/bin/python3",
+            ".pyenv/shims/python3",
+        ] {
+            let candidate = home.join(relative);
+            if candidate.exists() {
+                return candidate.into_os_string();
+            }
+        }
+    }
+    std::ffi::OsString::from("python3")
+}
+
 /// Executes an AI-parsed runtime install plan with a whitelisted installer.
-/// Python defaults to the base environment (`python3 -m pip install`); npx/uvx
-/// auto-fetch at runtime so no preinstall is needed.
-fn execute_mcp_install(install: &mut McpInstallPlan) {
+/// Python defaults to the base environment (conda/miniconda when present,
+/// otherwise PATH `python3`); npx/uvx auto-fetch at runtime so no preinstall
+/// is needed. Git-based sources get the app proxy injected via
+/// GIT_CONFIG_* so `pip install git+...` works behind a proxy.
+fn execute_mcp_install(install: &mut McpInstallPlan, proxy_url: &str) {
     use std::process::Command;
     let mut command = match install.tool.as_str() {
-        "pip" => Some(Command::new("python3")),
+        "pip" => Some(Command::new(resolve_base_python())),
         "uv" => Some(Command::new("uv")),
         "npm" => Some(Command::new("npm")),
         "go" => Some(Command::new("go")),
@@ -2189,6 +2211,13 @@ fn execute_mcp_install(install: &mut McpInstallPlan) {
     // have an invalid cwd (e.g. launched from a deleted path) which breaks
     // uv/pip with "Current directory does not exist".
     command.current_dir(std::env::temp_dir());
+    // Let git subprocesses of pip/uv use the configured proxy.
+    if !proxy_url.is_empty() {
+        command
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "http.proxy")
+            .env("GIT_CONFIG_VALUE_0", proxy_url);
+    }
     match install.tool.as_str() {
         "pip" => {
             command
@@ -2308,7 +2337,8 @@ fn parse_ai_source_impl(
             // installer + package list; python goes to the base env).
             if let Some(install) = mcp.install.as_mut() {
                 if install.status.is_empty() || install.status == "pending" {
-                    execute_mcp_install(install);
+                    let proxy_url = crate::core::network_proxy::get_github_proxy_url(store)?;
+                    execute_mcp_install(install, &proxy_url);
                     log::info!(
                         "MCP runtime install {} -> {:?} ({:?})",
                         install.tool,

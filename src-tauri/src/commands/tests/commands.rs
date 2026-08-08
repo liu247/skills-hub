@@ -282,7 +282,7 @@ fn execute_mcp_install_skips_autofetch_and_unsupported_installers() {
         status: "pending".to_string(),
         detail: None,
     };
-    super::execute_mcp_install(&mut plan);
+    super::execute_mcp_install(&mut plan, "http://127.0.0.1:7897");
     assert_eq!(plan.status, "skipped");
 
     // unsupported installer -> skipped with reason
@@ -293,7 +293,7 @@ fn execute_mcp_install_skips_autofetch_and_unsupported_installers() {
         status: "pending".to_string(),
         detail: None,
     };
-    super::execute_mcp_install(&mut plan);
+    super::execute_mcp_install(&mut plan, "http://127.0.0.1:7897");
     assert_eq!(plan.status, "skipped");
     assert!(plan.detail.unwrap_or_default().contains("unsupported"));
 
@@ -305,7 +305,7 @@ fn execute_mcp_install_skips_autofetch_and_unsupported_installers() {
         status: "pending".to_string(),
         detail: None,
     };
-    super::execute_mcp_install(&mut plan);
+    super::execute_mcp_install(&mut plan, "http://127.0.0.1:7897");
     assert_eq!(plan.status, "skipped");
     assert!(plan.detail.unwrap_or_default().contains("no packages"));
 }
