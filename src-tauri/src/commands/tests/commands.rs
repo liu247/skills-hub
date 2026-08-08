@@ -230,12 +230,12 @@ fn materialize_collection_env_keeps_multiple_collections_in_shared_env() {
     );
 }
 
-/// Live smoke test: syncs the real collection env into the real
-/// ~/.claude/settings.json `env` map and verifies the script-facing lookup.
-/// Run with: cargo test -- --ignored smoke_sync_global_env_to_claude
+/// Live smoke test: syncs the real collection env into every supported
+/// tool's global env config and verifies script-facing lookups.
+/// Run with: cargo test -- --ignored smoke_sync_global_env_all_tools
 #[test]
-#[ignore = "live smoke test that writes the real claude settings"]
-fn smoke_sync_global_env_to_claude() {
+#[ignore = "live smoke test that writes real tool configs"]
+fn smoke_sync_global_env_all_tools() {
     let db_path =
         "/Users/ywxklzd/Library/Application Support/com.qufei1993.skillshub/skills_hub.db";
     if !std::path::Path::new(db_path).exists() {
@@ -244,18 +244,27 @@ fn smoke_sync_global_env_to_claude() {
     }
     let store = SkillStore::new(db_path.into());
     store.ensure_schema().expect("ensure schema");
-    super::sync_tool_global_env(&store, "claude_code").expect("sync global env");
-    let settings = std::fs::read_to_string(
-        dirs::home_dir()
-            .expect("home")
-            .join(".claude/settings.json"),
-    )
-    .expect("read claude settings");
-    assert!(
-        settings.contains("SN_API_KEY"),
-        "SN_API_KEY must be written into ~/.claude/settings.json env"
-    );
-    println!("SMOKE OK: SN_API_KEY present in claude settings env");
+    let home = dirs::home_dir().expect("home");
+    for tool_key in ["claude_code", "codex", "reasonix"] {
+        super::sync_tool_global_env(&store, tool_key).expect("sync global env");
+        let config = crate::core::tool_env::global_env_config_for(tool_key).expect("config");
+        let env = crate::core::tool_env::read_global_env(&config).expect("read env");
+        println!(
+            "SMOKE {}: SN_API_KEY={} SN_BASE_URL={}",
+            tool_key,
+            env.get("SN_API_KEY").map(|_| "set").unwrap_or("MISSING"),
+            env.get("SN_BASE_URL").map(|_| "set").unwrap_or("MISSING"),
+        );
+    }
+    let claude_settings =
+        std::fs::read_to_string(home.join(".claude/settings.json")).expect("read claude settings");
+    assert!(claude_settings.contains("SN_API_KEY"));
+    let codex_config =
+        std::fs::read_to_string(home.join(".codex/config.toml")).expect("read codex config");
+    assert!(codex_config.contains("SN_API_KEY"));
+    // reasonix currently has no activated skills, so the sync skips it; its
+    // global .env may still carry user-provided keys (untouched by us).
+    println!("SMOKE OK: activated tools carry collection env");
 }
 
 #[test]
