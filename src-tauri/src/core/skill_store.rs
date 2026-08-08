@@ -1119,6 +1119,16 @@ impl SkillStore {
         })
     }
 
+    /// Returns the managed server whose name equals `name` (case-sensitive),
+    /// used to update an existing entry instead of hitting the UNIQUE(name)
+    /// constraint when the caller does not know the id (e.g. AI re-parse).
+    pub fn get_mcp_server_by_name(&self, name: &str) -> Result<Option<McpServerRecord>> {
+        Ok(self
+            .list_mcp_servers()?
+            .into_iter()
+            .find(|server| server.name == name))
+    }
+
     pub fn replace_mcp_secret_refs(
         &self,
         server_id: &str,

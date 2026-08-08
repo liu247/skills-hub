@@ -635,56 +635,72 @@ pub async fn upsert_mcp_server(
     server: McpServerDto,
 ) -> Result<McpServerDto, String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let transport = match server.transport.as_str() {
-            "stdio" => McpTransport::Stdio,
-            "http" => McpTransport::Http,
-            _ => anyhow::bail!("unsupported MCP transport"),
-        };
-        let input = McpServerInput {
-            name: server.name.clone(),
-            transport,
-            command: server.command.clone(),
-            args: server.args.clone(),
-            env: server.env.clone(),
-            url: server.url.clone(),
-            headers: server.headers.clone(),
-        };
-        validate_mcp_server_input(&input)?;
-        let now = now_ms();
-        let record = McpServerRecord {
-            id: if server.id.is_empty() {
-                Uuid::new_v4().to_string()
-            } else {
-                server.id
-            },
-            name: server.name,
-            transport: server.transport,
-            command: server.command,
-            args: server.args,
-            env: string_map_to_json_map(server.env),
-            cwd: server.cwd,
-            url: server.url,
-            headers: string_map_to_json_map(server.headers),
-            enabled: server.enabled,
-            proxy_enabled: server.proxy_enabled,
-            source_url: server.source_url,
-            source_path: server.source_path,
-            created_at: now,
-            updated_at: now,
-        };
-        store.upsert_mcp_server(&record)?;
-        let refs = server
-            .secret_refs
-            .iter()
-            .map(|reference| McpSecretRefRecord::new(&record.id, &reference.env_var))
-            .collect::<Vec<_>>();
-        store.replace_mcp_secret_refs(&record.id, &refs)?;
-        to_mcp_dto(&store, record)
-    })
-    .await
-    .map_err(|err| err.to_string())?
-    .map_err(format_anyhow_error)
+    tauri::async_runtime::spawn_blocking(move || upsert_mcp_server_impl(&store, server))
+        .await
+        .map_err(|err| err.to_string())?
+        .map_err(format_anyhow_error)
+}
+
+fn upsert_mcp_server_impl(
+    store: &SkillStore,
+    server: McpServerDto,
+) -> anyhow::Result<McpServerDto> {
+    let transport = match server.transport.as_str() {
+        "stdio" => McpTransport::Stdio,
+        "http" => McpTransport::Http,
+        _ => anyhow::bail!("unsupported MCP transport"),
+    };
+    let input = McpServerInput {
+        name: server.name.clone(),
+        transport,
+        command: server.command.clone(),
+        args: server.args.clone(),
+        env: server.env.clone(),
+        url: server.url.clone(),
+        headers: server.headers.clone(),
+    };
+    validate_mcp_server_input(&input)?;
+    let now = now_ms();
+    let generated_id = Uuid::new_v4().to_string();
+    // Reuse an existing record id when a server with the same name
+    // already exists, so AI-parse re-confirmation (id == "") updates the
+    // entry instead of failing on the UNIQUE(name) constraint.
+    let existing_id = if server.id.is_empty() {
+        store
+            .get_mcp_server_by_name(&server.name)?
+            .map(|existing| existing.id)
+    } else {
+        None
+    };
+    let record = McpServerRecord {
+        id: if server.id.is_empty() {
+            existing_id.unwrap_or(generated_id)
+        } else {
+            server.id
+        },
+        name: server.name,
+        transport: server.transport,
+        command: server.command,
+        args: server.args,
+        env: string_map_to_json_map(server.env),
+        cwd: server.cwd,
+        url: server.url,
+        headers: string_map_to_json_map(server.headers),
+        enabled: server.enabled,
+        proxy_enabled: server.proxy_enabled,
+        source_url: server.source_url,
+        source_path: server.source_path,
+        created_at: now,
+        updated_at: now,
+    };
+    store.upsert_mcp_server(&record)?;
+    let refs = server
+        .secret_refs
+        .iter()
+        .map(|reference| McpSecretRefRecord::new(&record.id, &reference.env_var))
+        .collect::<Vec<_>>();
+    store.replace_mcp_secret_refs(&record.id, &refs)?;
+    to_mcp_dto(store, record)
 }
 
 #[tauri::command]

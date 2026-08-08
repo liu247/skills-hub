@@ -3,6 +3,41 @@ use crate::core::credential_store::{CredentialStore, LocalCredentialStore, Memor
 use crate::core::skill_store::SkillRecord;
 
 #[test]
+fn upsert_mcp_server_reuses_id_for_existing_name() {
+    let (_dir, store) = make_store();
+    // 模拟 AI 解析保存两次（第二次 id 为空，同名 zhipu-image）
+    let make_dto = |id: &str, command: &str| McpServerDto {
+        id: id.to_string(),
+        name: "zhipu-image".to_string(),
+        transport: "stdio".to_string(),
+        command: Some(command.to_string()),
+        args: vec![],
+        env: std::collections::BTreeMap::new(),
+        cwd: None,
+        url: None,
+        headers: std::collections::BTreeMap::new(),
+        enabled: true,
+        proxy_enabled: true,
+        source_url: Some("https://github.com/liu247/zhipu-image".to_string()),
+        source_path: None,
+        secret_refs: vec![],
+        targets: vec![],
+    };
+    let first = upsert_mcp_server_impl(&store, make_dto("", "zhipu-image-mcp")).unwrap();
+    let second = upsert_mcp_server_impl(&store, make_dto("", "uv run zhipu-image-mcp")).unwrap();
+    assert_eq!(
+        first.id, second.id,
+        "re-parse with empty id must reuse the id"
+    );
+    let servers = store.list_mcp_servers().unwrap();
+    assert_eq!(servers.len(), 1, "only one record for the same name");
+    assert_eq!(
+        servers[0].command.as_deref(),
+        Some("uv run zhipu-image-mcp")
+    );
+}
+
+#[test]
 fn mcp_dto_never_serializes_secret_values() {
     let dto = McpServerDto {
         id: "server-1".to_string(),
