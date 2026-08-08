@@ -1409,7 +1409,14 @@ function App() {
       if (saved) {
         setAiParseMode(null)
         setActiveView('mcp')
-        toast.success(t('mcp.saved'))
+        const runtimeNote = mcp.install
+          ? mcp.install.status === 'installed'
+            ? ` ${t('mcp.runtimeInstalled', { tool: mcp.install.tool, packages: mcp.install.packages.join(', ') })}`
+            : ` ${t('mcp.runtimeFailed', { detail: mcp.install.detail ?? mcp.install.status })}`
+          : mcp.runtime
+            ? ` ${t('mcp.runtimeAutoFetch', { runtime: mcp.runtime })}`
+            : ''
+        toast.success(t('mcp.saved') + runtimeNote)
       }
     }
   }, [saveMcpServer, setMcpServerTargets, t])
