@@ -137,4 +137,5 @@ fn unsupported_tools_have_no_global_env_config() {
     assert!(crate::core::tool_env::global_env_config_for("claude_code").is_some());
     assert!(crate::core::tool_env::global_env_config_for("codex").is_some());
     assert!(crate::core::tool_env::global_env_config_for("reasonix").is_some());
+    assert!(crate::core::tool_env::global_env_config_for("custom_reasonix").is_some());
 }

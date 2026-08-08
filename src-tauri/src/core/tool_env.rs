@@ -46,7 +46,9 @@ pub fn global_env_config_for(tool_key: &str) -> Option<ToolGlobalEnvConfig> {
             relative_config_path: ".codex/config.toml",
             format: EnvConfigFormat::CodexShellPolicy,
         }),
-        "reasonix" => Some(ToolGlobalEnvConfig {
+        // Reasonix may appear as a built-in key or as a user-added custom tool
+        // (custom_reasonix); its global env file is the same either way.
+        "reasonix" | "custom_reasonix" => Some(ToolGlobalEnvConfig {
             tool_key: "reasonix",
             relative_config_path: ".reasonix/.env",
             format: EnvConfigFormat::DotEnvFile,

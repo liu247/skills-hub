@@ -245,7 +245,7 @@ fn smoke_sync_global_env_all_tools() {
     let store = SkillStore::new(db_path.into());
     store.ensure_schema().expect("ensure schema");
     let home = dirs::home_dir().expect("home");
-    for tool_key in ["claude_code", "codex", "reasonix"] {
+    for tool_key in ["claude_code", "codex", "custom_reasonix"] {
         super::sync_tool_global_env(&store, tool_key).expect("sync global env");
         let config = crate::core::tool_env::global_env_config_for(tool_key).expect("config");
         let env = crate::core::tool_env::read_global_env(&config).expect("read env");
@@ -262,9 +262,13 @@ fn smoke_sync_global_env_all_tools() {
     let codex_config =
         std::fs::read_to_string(home.join(".codex/config.toml")).expect("read codex config");
     assert!(codex_config.contains("SN_API_KEY"));
-    // reasonix currently has no activated skills, so the sync skips it; its
-    // global .env may still carry user-provided keys (untouched by us).
-    println!("SMOKE OK: activated tools carry collection env");
+    let reasonix_env =
+        std::fs::read_to_string(home.join(".reasonix/.env")).expect("read reasonix global env");
+    assert!(
+        reasonix_env.contains("SN_API_KEY"),
+        "custom_reasonix is activated, its global env must carry the collection env"
+    );
+    println!("SMOKE OK: all activated tools carry collection env");
 }
 
 #[test]
