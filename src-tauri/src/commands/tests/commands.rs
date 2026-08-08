@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::credential_store::{CredentialStore, LocalCredentialStore};
+use crate::core::credential_store::{CredentialStore, LocalCredentialStore, MemoryCredentialStore};
 use crate::core::skill_store::SkillRecord;
 
 #[test]
@@ -125,6 +125,56 @@ fn make_target_record(
         last_error: None,
         synced_at: None,
     }
+}
+
+#[test]
+fn materialize_collection_env_writes_repo_root_env_for_repo_layout_scripts() {
+    let (dir, store) = make_store();
+    // 复现仓库布局安装：central = <root>/central/<skill>
+    // 脚本按 repo_root = <skill_dir>.parent().parent() 找 .env
+    let central = dir.path().join("central");
+    let skill_dir = central.join("skill-a");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill = SkillRecord {
+        id: "skill-a".to_string(),
+        name: "skill-a".to_string(),
+        description: None,
+        source_type: "git".to_string(),
+        source_ref: None,
+        source_subpath: None,
+        source_revision: None,
+        central_path: skill_dir.to_string_lossy().to_string(),
+        content_hash: None,
+        created_at: 1,
+        updated_at: 1,
+        last_sync_at: None,
+        last_seen_at: 1,
+        enabled: true,
+        status: "ok".to_string(),
+        collection: Some("TestCollection".to_string()),
+    };
+    store.upsert_skill(&skill).unwrap();
+    store
+        .upsert_collection_parameter(
+            "TestCollection",
+            "SN_API_KEY",
+            "api key",
+            false,
+            Some("secret-value"),
+        )
+        .unwrap();
+
+    super::materialize_collection_env(&store, &MemoryCredentialStore::default(), "TestCollection")
+        .expect("materialize env");
+
+    // skill 目录内的 .env（原有行为）
+    let skill_env = std::fs::read_to_string(skill_dir.join(".env")).unwrap();
+    assert!(skill_env.contains("SN_API_KEY=secret-value"));
+
+    // repo_root 位置的 .env（脚本实际查找位置 = <skill_dir>.parent().parent()）
+    let repo_env = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+    assert!(repo_env.contains("SN_API_KEY=secret-value"));
+    assert!(repo_env.contains("Skills Hub managed parameters"));
 }
 
 #[test]

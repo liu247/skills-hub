@@ -2640,31 +2640,31 @@ fn materialize_collection_env(
     let marker_start = "# >>> Skills Hub managed parameters >>>";
     let marker_end = "# <<< Skills Hub managed parameters <<<";
     let block = format!("{marker_start}\n{}\n{marker_end}\n", lines.join("\n"));
+    let mut extra_env_paths: Vec<std::path::PathBuf> = Vec::new();
     for skill in store
         .list_skills()?
         .into_iter()
         .filter(|skill| skill.collection.as_deref() == Some(collection_name))
     {
         let path = std::path::Path::new(&skill.central_path).join(".env");
-        let current = std::fs::read_to_string(&path).unwrap_or_default();
-        let next = match (current.find(marker_start), current.find(marker_end)) {
-            (Some(start), Some(end)) if end >= start => {
-                let end = end + marker_end.len();
-                format!(
-                    "{}{}{}",
-                    &current[..start],
-                    block,
-                    current[end..].trim_start_matches('\n')
-                )
-            }
-            _ if current.is_empty() => block.clone(),
-            _ => format!("{}\n{}", current.trim_end(), block),
-        };
-        std::fs::write(&path, next)
-            .with_context(|| format!("write managed environment file {:?}", path))?;
-        #[cfg(unix)]
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        write_managed_env_block(&path, &block, marker_start, marker_end)?;
+        // Skill scripts written for a repository layout (e.g. SenseNova
+        // skills) resolve their repo root as `<dir>.parent().parent()` and
+        // look for `.env` there (not inside the skill folder). Write a copy
+        // to that location so `os.environ` / python-dotenv can see the keys.
+        if let Some(repo_root) = std::path::Path::new(&skill.central_path)
+            .parent()
+            .and_then(std::path::Path::parent)
+        {
+            extra_env_paths.push(repo_root.join(".env"));
+        }
         for target in store.list_skill_targets(&skill.id)? {
+            if let Some(repo_root) = std::path::Path::new(&target.target_path)
+                .parent()
+                .and_then(std::path::Path::parent)
+            {
+                extra_env_paths.push(repo_root.join(".env"));
+            }
             let mode = match target.mode.as_str() {
                 "copy" => SyncMode::Copy,
                 "symlink" => SyncMode::Symlink,
@@ -2679,6 +2679,40 @@ fn materialize_collection_env(
             );
         }
     }
+    let mut seen = std::collections::HashSet::new();
+    for extra in extra_env_paths {
+        if !seen.insert(extra.clone()) {
+            continue;
+        }
+        write_managed_env_block(&extra, &block, marker_start, marker_end)?;
+    }
+    Ok(())
+}
+
+fn write_managed_env_block(
+    path: &std::path::Path,
+    block: &str,
+    marker_start: &str,
+    marker_end: &str,
+) -> anyhow::Result<()> {
+    let current = std::fs::read_to_string(path).unwrap_or_default();
+    let next = match (current.find(marker_start), current.find(marker_end)) {
+        (Some(start), Some(end)) if end >= start => {
+            let end = end + marker_end.len();
+            format!(
+                "{}{}{}",
+                &current[..start],
+                block,
+                current[end..].trim_start_matches('\n')
+            )
+        }
+        _ if current.is_empty() => block.to_string(),
+        _ => format!("{}\n{}", current.trim_end(), block),
+    };
+    std::fs::write(path, next)
+        .with_context(|| format!("write managed environment file {:?}", path))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
