@@ -2185,6 +2185,10 @@ fn execute_mcp_install(install: &mut McpInstallPlan) {
             return;
         }
     };
+    // Run installs from a stable working directory; the parent process may
+    // have an invalid cwd (e.g. launched from a deleted path) which breaks
+    // uv/pip with "Current directory does not exist".
+    command.current_dir(std::env::temp_dir());
     match install.tool.as_str() {
         "pip" => {
             command

@@ -509,8 +509,10 @@ source evidence. Never return executable shell instructions beyond an MCP comman
 tokens, passwords, or literal secrets. Represent a required secret only as ${NAME}, where NAME is uppercase and ends \
 with _KEY, _TOKEN, _SECRET, or _PASSWORD. For an MCP server, inspect the README install/start sections: if the server \
 needs a runtime installed before it can run, set mcp_plan.runtime (python/node/go) and mcp_plan.install with tool \
-(pip/uv/npm/go) and packages (e.g. [\"zhipu-image-mcp\"]) plus the README evidence line. If the command already \
-auto-fetches via npx or uvx, set mcp_plan.runtime to npx/uvx and leave mcp_plan.install empty. Never invent packages \
+(pip/uv/npm/go) and packages (e.g. [\"zhipu-image-mcp\"] or [\"git+https://github.com/owner/repo.git\"]) plus the \
+README evidence line. Prefer pip install (base environment, python runtime) whenever the README offers it; use \
+uv tool install only for CLI tools, and npm -g for node packages. If the command already auto-fetches via npx or \
+uvx, set mcp_plan.runtime to npx/uvx and leave mcp_plan.install empty. Never invent packages \
 that the README does not name. For a Skill, inspect source setup documentation and return every required \
 environment variable in skill_plan.parameters as name, description, is_sensitive, optional non-secret default_value, \
 required, and evidence. A sensitive parameter must not have default_value. The user must review and confirm the plan before Skills Hub writes it. \
