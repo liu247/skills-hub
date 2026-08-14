@@ -1,7 +1,7 @@
 import { memo, useState } from 'react'
 import type { TFunction } from 'i18next'
 
-const targets = ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix']
+const targets = ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix', 'custom_deepseek_harness']
 
 type Props = { open: boolean; busy: boolean; selectedTools: string[]; onClose: () => void; onSave: (tools: string[]) => void; t: TFunction }
 

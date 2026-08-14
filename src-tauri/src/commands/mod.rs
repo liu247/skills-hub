@@ -122,7 +122,14 @@ pub struct LocalMcpImportSelection {
     pub host: String,
 }
 
-const MCP_TARGETS: [&str; 5] = ["codex", "claude_code", "claude_3p", "kiro", "reasonix"];
+const MCP_TARGETS: [&str; 6] = [
+    "codex",
+    "claude_code",
+    "claude_3p",
+    "kiro",
+    "reasonix",
+    "custom_deepseek_harness",
+];
 
 fn json_map_to_string_map(
     map: &serde_json::Map<String, serde_json::Value>,
@@ -1001,6 +1008,7 @@ fn mcp_host(tool: &str) -> anyhow::Result<McpHost> {
         "claude_3p" => Ok(McpHost::Claude3p),
         "kiro" => Ok(McpHost::Kiro),
         "reasonix" => Ok(McpHost::Reasonix),
+        "custom_deepseek_harness" => Ok(McpHost::DeepSeekHarness),
         _ => anyhow::bail!("unsupported MCP target {tool}"),
     }
 }

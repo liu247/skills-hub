@@ -15,6 +15,7 @@ pub enum McpHost {
     Claude3p,
     Kiro,
     Reasonix,
+    DeepSeekHarness,
 }
 
 #[derive(Clone, Debug)]
@@ -36,6 +37,7 @@ pub fn global_config_path_in(home: &Path, host: McpHost) -> Result<PathBuf> {
         }
         McpHost::Kiro => home.join(".kiro/settings/mcp.json"),
         McpHost::Reasonix => home.join(".reasonix/config.toml"),
+        McpHost::DeepSeekHarness => home.join(".dsh/cordis.patch.yml"),
     })
 }
 
@@ -52,6 +54,7 @@ pub fn render_server(host: McpHost, server: &McpServerRecord) -> Result<String> 
     match host {
         McpHost::Codex => render_codex(server, &value),
         McpHost::Reasonix => render_reasonix(server, &value),
+        McpHost::DeepSeekHarness => render_dsh(server, &value),
         McpHost::ClaudeCode | McpHost::Claude3p | McpHost::Kiro => {
             Ok(serde_json::to_string_pretty(&json!({
                 "mcpServers": { server.name.clone(): value }
@@ -118,6 +121,9 @@ pub fn sync_host_file(
         McpHost::Reasonix => {
             merge_reasonix_toml_config(&existing, &rendered, &server.name, owns_existing_entry)?
         }
+        McpHost::DeepSeekHarness => {
+            merge_dsh_yaml_config(&existing, &rendered, &server.name, owns_existing_entry)?
+        }
     };
     Ok(McpSyncOutcome {
         backup_path: write_config_atomically(path, &next)?,
@@ -158,6 +164,10 @@ pub fn host_config_contains_server(host: McpHost, path: &Path, server_name: &str
                         .any(|plugin| plugin["name"].as_str() == Some(server_name))
                 }))
         }
+        McpHost::DeepSeekHarness => {
+            let id_line = format!("- id: {}", yaml_scalar(&dsh_entry_id(server_name)));
+            Ok(existing.lines().any(|line| line.trim() == id_line))
+        }
     }
 }
 
@@ -172,6 +182,7 @@ pub fn remove_host_file(host: McpHost, server_name: &str, path: &Path) -> Result
         }
         McpHost::Codex => remove_codex_toml_config(&existing, server_name)?,
         McpHost::Reasonix => remove_reasonix_toml_config(&existing, server_name)?,
+        McpHost::DeepSeekHarness => remove_dsh_yaml_config(&existing, server_name)?,
     };
     Ok(McpSyncOutcome {
         backup_path: write_config_atomically(path, &next)?,
@@ -386,6 +397,167 @@ fn render_reasonix(server: &McpServerRecord, value: &Value) -> Result<String> {
     }
     array.push(table);
     Ok(doc.to_string())
+}
+
+/// DeepSeek Harness (dsh) MCP sync.
+///
+/// DSH consumes MCP servers through its Cordis patch layer
+/// (`~/.dsh/cordis.patch.yml`): each server is one `- insert:` entry that adds
+/// an `@deepseek-ai/dsh-mcp-client` plugin instance (see
+/// `examples/mcp-memory/*.cordis.yml` in deepseek-harness). Skills Hub manages
+/// only its own entries, identified by the stable `skills-hub-<name>` id, so
+/// unrelated user patches (which may contain `!!js` tags that YAML libraries
+/// cannot round-trip) are preserved byte-for-byte.
+fn dsh_entry_id(server_name: &str) -> String {
+    format!("skills-hub-{server_name}")
+}
+
+/// YAML plain scalar when safe, otherwise a double-quoted scalar. This keeps
+/// values with spaces, colons, quotes or hashes valid inside the patch file.
+fn yaml_scalar(value: &str) -> String {
+    let safe = !value.is_empty()
+        && value != "~"
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || "-_./:@%+=,~".contains(character));
+    if safe {
+        value.to_string()
+    } else {
+        format!(
+            "\"{}\"",
+            value
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        )
+    }
+}
+
+fn render_dsh(server: &McpServerRecord, value: &Value) -> Result<String> {
+    let object = value
+        .as_object()
+        .context("rendered MCP entry must be an object")?;
+    let mut lines = vec![
+        "- insert:".to_string(),
+        format!("    - id: {}", yaml_scalar(&dsh_entry_id(&server.name))),
+        "      name: '@deepseek-ai/dsh-mcp-client'".to_string(),
+        "      config:".to_string(),
+        format!("        serverName: {}", yaml_scalar(&server.name)),
+    ];
+    match server.transport.as_str() {
+        "stdio" => {
+            lines.push("        transport: stdio".to_string());
+            if let Some(Value::String(command)) = object.get("command") {
+                lines.push(format!("        command: {}", yaml_scalar(command)));
+            }
+            if let Some(Value::Array(args)) = object.get("args") {
+                let values = args.iter().filter_map(Value::as_str).collect::<Vec<_>>();
+                if !values.is_empty() {
+                    lines.push("        args:".to_string());
+                    for argument in values {
+                        lines.push(format!("          - {}", yaml_scalar(argument)));
+                    }
+                }
+            }
+            if let Some(Value::Object(environment)) = object.get("env") {
+                if !environment.is_empty() {
+                    lines.push("        env:".to_string());
+                    for (key, value) in environment {
+                        if let Value::String(value) = value {
+                            lines.push(format!(
+                                "          {}: {}",
+                                yaml_scalar(key),
+                                yaml_scalar(value)
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some(cwd) = server.cwd.as_deref().filter(|cwd| !cwd.is_empty()) {
+                lines.push(format!("        cwd: {}", yaml_scalar(cwd)));
+            }
+        }
+        "http" => {
+            lines.push("        transport: streamable-http".to_string());
+            if let Some(Value::String(url)) = object.get("url") {
+                lines.push(format!("        url: {}", yaml_scalar(url)));
+            }
+            if let Some(Value::Object(headers)) = object.get("headers") {
+                if !headers.is_empty() {
+                    lines.push("        headers:".to_string());
+                    for (key, value) in headers {
+                        if let Value::String(value) = value {
+                            lines.push(format!(
+                                "          {}: {}",
+                                yaml_scalar(key),
+                                yaml_scalar(value)
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        _ => anyhow::bail!("unsupported MCP transport {}", server.transport),
+    }
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
+/// Returns the byte range of the DSH patch entry whose id matches `id_line`
+/// (for example `- id: skills-hub-tavily`), including its leading `- insert:`
+/// line and trailing newline, but not the following top-level entry.
+fn dsh_entry_block_range(existing: &str, id_line: &str) -> Option<(usize, usize)> {
+    let lines = existing.split_inclusive('\n').collect::<Vec<_>>();
+    let id_index = lines.iter().position(|line| line.trim() == id_line)?;
+    let mut start = id_index;
+    while start > 0 && !lines[start].starts_with("- insert:") {
+        start -= 1;
+    }
+    if !lines[start].starts_with("- insert:") {
+        return None;
+    }
+    let mut end = id_index + 1;
+    while end < lines.len() && !lines[end].starts_with("- insert:") {
+        end += 1;
+    }
+    let byte_start = lines[..start].iter().map(|line| line.len()).sum();
+    let byte_end = lines[..end].iter().map(|line| line.len()).sum();
+    Some((byte_start, byte_end))
+}
+
+pub fn merge_dsh_yaml_config(
+    existing: &str,
+    rendered: &str,
+    server_name: &str,
+    owns_existing_entry: bool,
+) -> Result<String> {
+    let id_line = format!("- id: {}", yaml_scalar(&dsh_entry_id(server_name)));
+    if let Some((start, end)) = dsh_entry_block_range(existing, &id_line) {
+        if !owns_existing_entry {
+            anyhow::bail!("MCP server name is already used by an unmanaged host entry");
+        }
+        let mut next = String::with_capacity(existing.len() - (end - start) + rendered.len());
+        next.push_str(&existing[..start]);
+        next.push_str(rendered);
+        next.push_str(&existing[end..]);
+        return Ok(next);
+    }
+    let mut next = existing.to_string();
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    next.push_str(rendered);
+    Ok(next)
+}
+
+pub fn remove_dsh_yaml_config(existing: &str, server_name: &str) -> Result<String> {
+    let id_line = format!("- id: {}", yaml_scalar(&dsh_entry_id(server_name)));
+    let Some((start, end)) = dsh_entry_block_range(existing, &id_line) else {
+        return Ok(existing.to_string());
+    };
+    let mut next = String::with_capacity(existing.len() - (end - start));
+    next.push_str(&existing[..start]);
+    next.push_str(&existing[end..]);
+    Ok(next)
 }
 
 fn toml_array(values: &[Value]) -> toml_edit::Array {

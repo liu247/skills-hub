@@ -16,6 +16,7 @@ fn secret_bearing_stdio_renders_plaintext_env_for_all_hosts() {
         McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
+        McpHost::DeepSeekHarness,
     ] {
         let rendered = render_server(host, &server).unwrap();
         assert!(!rendered.contains("--mcp-bridge"));
@@ -237,6 +238,7 @@ fn supported_hosts_have_global_config_paths() {
         McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
+        McpHost::DeepSeekHarness,
     ] {
         assert!(crate::core::mcp_adapters::global_config_path(host).is_ok());
     }
@@ -267,6 +269,7 @@ fn secret_bearing_http_renders_plaintext_headers_for_all_hosts() {
         McpHost::Claude3p,
         McpHost::Kiro,
         McpHost::Reasonix,
+        McpHost::DeepSeekHarness,
     ] {
         let rendered = render_server(host, &server).unwrap();
         assert!(rendered.contains("https://mcp.stripe.com"));
@@ -274,4 +277,142 @@ fn secret_bearing_http_renders_plaintext_headers_for_all_hosts() {
         assert!(rendered.contains("Authorization"));
         assert!(rendered.contains("sk-live-123"));
     }
+}
+
+#[test]
+fn dsh_stdio_render_matches_cordis_insert_shape() {
+    let mut server = McpServerRecord::stdio(
+        "memory-id",
+        "memory",
+        "mcp-server-memory",
+        vec!["--db".into(), "x".into()],
+    );
+    server.cwd = Some("/tmp".into());
+    server
+        .env
+        .insert("MEMORY_FILE_PATH".into(), "~/.dsh/memory.jsonl".into());
+
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+    assert!(rendered.starts_with("- insert:\n"), "{rendered}");
+    assert!(
+        rendered.contains("    - id: skills-hub-memory"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("name: '@deepseek-ai/dsh-mcp-client'"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("serverName: memory"), "{rendered}");
+    assert!(rendered.contains("transport: stdio"), "{rendered}");
+    assert!(
+        rendered.contains("command: mcp-server-memory"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("          - --db"), "{rendered}");
+    assert!(rendered.contains("          - x"), "{rendered}");
+    assert!(rendered.contains("        env:"), "{rendered}");
+    assert!(
+        rendered.contains("          MEMORY_FILE_PATH: ~/.dsh/memory.jsonl"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("        cwd: /tmp"), "{rendered}");
+}
+
+#[test]
+fn dsh_http_render_uses_streamable_http_transport() {
+    let mut server = McpServerRecord::stdio("http-id", "remote", "unused", vec![]);
+    server.transport = "http".into();
+    server.command = None;
+    server.url = Some("https://mcp.example.com/sse".into());
+    server
+        .headers
+        .insert("Authorization".into(), "Bearer tok:en".into());
+
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+    assert!(
+        rendered.contains("transport: streamable-http"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("url: https://mcp.example.com/sse"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("        headers:"), "{rendered}");
+    // 冒号/特殊字符值必须被正确引用，保持 YAML 有效
+    assert!(
+        rendered.contains("Authorization: \"Bearer tok:en\""),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn dsh_merge_appends_entry_and_preserves_user_patches_with_js_tags() {
+    let existing = "- insert:\n    - id: user-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: user_memory\n        transport: stdio\n        command: mcp-server-memory\n        cwd: !!js process.cwd()\n";
+    let server = McpServerRecord::stdio("memory-id", "memory", "mcp-server-memory", vec![]);
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+
+    let merged =
+        crate::core::mcp_adapters::merge_dsh_yaml_config(existing, &rendered, "memory", false)
+            .unwrap();
+    assert!(merged.contains("cwd: !!js process.cwd()"), "{merged}");
+    assert!(merged.contains("- id: skills-hub-memory"), "{merged}");
+    // 用户条目在 skills-hub 条目之前
+    assert!(
+        merged.find("user-memory").unwrap() < merged.find("skills-hub-memory").unwrap(),
+        "{merged}"
+    );
+}
+
+#[test]
+fn dsh_merge_replaces_owned_entry_in_place() {
+    let existing =
+        "- insert:\n    - id: skills-hub-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memory\n        transport: stdio\n        command: old-cmd\n";
+    let mut server = McpServerRecord::stdio("memory-id", "memory", "new-cmd", vec![]);
+    server.env.insert("MODE".into(), "new".into());
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+
+    let merged =
+        crate::core::mcp_adapters::merge_dsh_yaml_config(existing, &rendered, "memory", true)
+            .unwrap();
+    assert!(!merged.contains("old-cmd"), "{merged}");
+    assert!(merged.contains("command: new-cmd"), "{merged}");
+    assert!(merged.contains("MODE: new"), "{merged}");
+    assert_eq!(merged.matches("- insert:").count(), 1, "{merged}");
+}
+
+#[test]
+fn dsh_merge_rejects_unowned_collision() {
+    let existing = "- insert:\n    - id: skills-hub-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: memory\n";
+    let server = McpServerRecord::stdio("memory-id", "memory", "cmd", vec![]);
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+
+    assert!(
+        crate::core::mcp_adapters::merge_dsh_yaml_config(existing, &rendered, "memory", false)
+            .is_err()
+    );
+}
+
+#[test]
+fn dsh_remove_keeps_unrelated_entries() {
+    let existing = "- insert:\n    - id: user-memory\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        cwd: !!js process.cwd()\n- insert:\n    - id: skills-hub-tavily\n      name: '@deepseek-ai/dsh-mcp-client'\n      config:\n        serverName: tavily\n";
+    let next = crate::core::mcp_adapters::remove_dsh_yaml_config(existing, "tavily").unwrap();
+    assert!(next.contains("user-memory"), "{next}");
+    assert!(next.contains("cwd: !!js process.cwd()"), "{next}");
+    assert!(!next.contains("skills-hub-tavily"), "{next}");
+    assert_eq!(next.matches("- insert:").count(), 1, "{next}");
+}
+
+#[test]
+fn dsh_entry_id_with_special_characters_is_quoted() {
+    let mut server = McpServerRecord::stdio("weird-id", "my server:v1", "cmd", vec![]);
+    server.cwd = Some("/path with space".into());
+    let rendered = render_server(McpHost::DeepSeekHarness, &server).unwrap();
+    assert!(
+        rendered.contains(r#"- id: "skills-hub-my server:v1""#),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(r#"cwd: "/path with space""#),
+        "{rendered}"
+    );
 }

@@ -22,7 +22,7 @@ type McpPageProps = {
   t: TFunction
 }
 
-const targets = ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix']
+const targets = ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix', 'custom_deepseek_harness']
 
 const emptyServer = (): McpServerDto => ({
   id: '', name: '', transport: 'stdio', command: '', args: [], env: {}, cwd: null,
