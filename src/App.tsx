@@ -800,14 +800,16 @@ function App() {
 
   const mcpTools = useMemo(() => {
     const byKey = new Map(toolInfos.map((info) => [info.key, info]))
-    return ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix'].map((key) => {
-      const info = byKey.get(key)
-      return {
-        id: key,
-        label: t(`tools.${key}`, { defaultValue: info?.label ?? key }),
-        avatar: info?.avatar ?? null,
-      }
-    })
+    return ['codex', 'claude_code', 'claude_3p', 'kiro', 'reasonix', 'custom_deepseek_harness']
+      .filter((key) => byKey.has(key))
+      .map((key) => {
+        const info = byKey.get(key)
+        return {
+          id: key,
+          label: t(`tools.${key}`, { defaultValue: info?.label ?? key }),
+          avatar: info?.avatar ?? null,
+        }
+      })
   }, [toolInfos, t])
 
   const toolLabelById = useMemo(() => {
