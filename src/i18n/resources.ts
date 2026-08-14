@@ -675,8 +675,10 @@ export const resources = {
         'Claude Code plugin · {{plugin}} · v{{version}} · User',
       errors: {
         notTauri: 'Current environment is not Tauri. Please run `npm run tauri dev`.',
-        skillExistsInHub: 'This skill already exists in Hub. No need to install again.',
-        skillExistsInHubNamed: '"{{name}}" already exists in Hub. Go to My Skills to update it.',
+        skillExistsInHub:
+          'The central storage folder is managed by Skills Hub and cannot be used for manual placement. Move this Skill elsewhere, then add it again from Local Directory.',
+        skillExistsInHubNamed:
+          'The central storage folder is managed by Skills Hub and cannot be used for manual placement. Move "{{name}}" elsewhere, then add it again from Local Directory.',
         targetExists: 'Target folder already exists. Please remove it and try again.',
         targetExistsDetail:
           'Target folder already exists: {{path}}. For safety it was not overwritten.',
@@ -1483,8 +1485,10 @@ export const resources = {
         'Claude Code 插件 · {{plugin}} · v{{version}} · 用户级',
       errors: {
         notTauri: '当前环境不是 Tauri，请用 `npm run tauri dev` 启动应用。',
-        skillExistsInHub: '该 Skill 已存在于 Hub，无需重复安装。',
-        skillExistsInHubNamed: '「{{name}}」已存在于 Hub，可前往"我的 Skills"中更新。',
+        skillExistsInHub:
+          '中心存储目录由 Skills Hub 自动管理，不能直接放入新的 Skill；请先将该 Skill 移到其他目录，再通过“本地目录”重新添加。',
+        skillExistsInHubNamed:
+          '中心存储目录由 Skills Hub 自动管理，不能直接放入新的 Skill；请先将「{{name}}」移到其他目录，再通过“本地目录”重新添加。',
         targetExists: '目标目录已存在，请先清理后重试。',
         targetExistsDetail:
           '目标目录已存在同名 Skill：{{path}}。为安全起见未覆盖。\n你可以：先手动清理该目录后重试。',

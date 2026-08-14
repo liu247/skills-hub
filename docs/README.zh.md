@@ -26,33 +26,41 @@ Skills Hub 的做法是：把 Skill 统一安装到中心仓库，再按你的�
 
 ### My Skills — 托管技能与批量管理
 
-My Skills 展示已托管 Skill 的来源、标签、同步范围、目标工具和启用状态。顶部可以筛选范围、排序、进入批量模式、按标签筛选或搜索。
+My Skills 通过卡片和列表两种视图展示已托管 Skill 的来源、标签、同步范围、目标工具和启用状态。顶部可以筛选范围、排序、按标签筛选、搜索或执行批量操作。
 
-![My Skills](./assets/my-skills.png)
+![My Skills 卡片视图](./assets/my-skills-card-view.png)
+
+![My Skills 列表视图与批量操作](./assets/my-skills-list-bulk-actions.png)
 
 ### Explore — 精选 Skill 与在线搜索
 
 Explore 汇总精选仓库中的 Skill，并支持在线搜索。点击 Install 后可以继续选择标签、安装范围和目标工具。
 
-![Explore](./assets/explore-search.png)
+![在线探索 Skills](./assets/explore-online-skills.png)
 
 ### Add Skill — 安装前设置标签、范围和工具
 
 手动添加支持本地目录和 Git 仓库。安装前可以设置标签，选择全局或项目范围，并选择要同步到哪些工具。
 
-![Add Skill](./assets/add-skill-modal.png)
+![从 Git 仓库添加 Skill](./assets/add-skill-git-repository.png)
 
-### Management Center — 标签、工具和更新集中管理
+### Tools — 内置与自定义工具管理
 
-管理中心收拢标签、工具和更新能力。更新页支持系统定时更新、立即更新、运行结果统计和失败原因查看。
+工具页集中展示已检测和已启用的 AI 编程工具，并使用对应产品图标增强识别。你可以启用内置目标，也可以为自定义工具配置头像、Skills 目录和明确的同步模式，并在创建后继续编辑。
 
-![Management Center Updates](./assets/management-updates.png)
+![内置与自定义工具管理](./assets/tools-management.png)
+
+### Updates — 定时更新与运行结果
+
+更新页可以注册系统级定时任务，在应用关闭时继续更新 Git 和本地来源的 Skill；也可以立即执行更新，并查看最近一次运行的检查、更新和失败数量。
+
+![Skills 定时更新与运行结果](./assets/updates-scheduled-run.png)
 
 ### Settings — 应用级设置
 
 设置页只保留应用偏好：界面语言、外观、存储与缓存、GitHub Token、网络代理和应用版本更新。
 
-![Settings](./assets/settings-page.png)
+![应用偏好设置](./assets/settings-app-preferences.png)
 
 ## 工作方式
 

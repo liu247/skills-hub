@@ -29,33 +29,41 @@ Skills Hub installs skills into one central repository, then syncs them to tools
 
 ### My Skills — Managed Skills and Bulk Actions
 
-My Skills shows each managed skill's source, tags, sync scope, target tools, and enabled state. The toolbar supports scope filtering, sorting, bulk mode, tag filtering, and search.
+My Skills provides card and list views for each managed skill's source, tags, sync scope, target tools, and enabled state. The toolbar supports scope filtering, sorting, tag filtering, search, and bulk actions.
 
-![My Skills](docs/assets/my-skills.png)
+![My Skills card view](docs/assets/my-skills-card-view.png)
+
+![My Skills list view with bulk actions](docs/assets/my-skills-list-bulk-actions.png)
 
 ### Explore — Curated Skills and Online Search
 
 Explore brings together curated repository skills and online search. After clicking Install, you can choose tags, install scope, and target tools.
 
-![Explore](docs/assets/explore-search.png)
+![Explore online skills](docs/assets/explore-online-skills.png)
 
 ### Add Skill — Set Tags, Scope, and Tools Before Installation
 
 Manual add supports both local folders and Git repositories. Before installing, you can assign tags, choose global or project scope, and choose which tools to sync to.
 
-![Add Skill](docs/assets/add-skill-modal.png)
+![Add a skill from a Git repository](docs/assets/add-skill-git-repository.png)
 
-### Management Center — Tags, Tools, and Updates
+### Tools — Built-in and Custom Tool Management
 
-Management Center keeps tag management, tool targets, and update scheduling in one place. The Updates page supports scheduled updates, manual updates, run summaries, and failure details.
+Tools shows detected and enabled AI coding tools with recognizable product icons. You can enable built-in targets or create and edit custom tools with an avatar, skills directories, and an explicit sync mode.
 
-![Management Center Updates](docs/assets/management-updates.png)
+![Built-in and custom tool management](docs/assets/tools-management.png)
+
+### Updates — Scheduled Runs and Results
+
+Updates can register a system-level schedule that keeps Git and local-source skills current while the app is closed. You can also update immediately and review checked, updated, and failed counts from the latest run.
+
+![Scheduled skill updates and run results](docs/assets/updates-scheduled-run.png)
 
 ### Settings — App-Level Preferences
 
 Settings keeps app-level preferences such as interface language, appearance, storage and cache, GitHub token, network proxy, and app updates.
 
-![Settings](docs/assets/settings-page.png)
+![Application preferences](docs/assets/settings-app-preferences.png)
 
 ## Workflow
 

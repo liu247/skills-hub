@@ -4,12 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-06
+
+### Fixed
+- **Central storage guidance**: When a local Skill import conflicts with a folder placed directly in the Skills Hub-managed central storage directory, the error now explains that the directory is managed by the app and tells the user how to move and re-import the Skill ([#103](https://github.com/qufei1993/skills-hub/issues/103)).
+
+## [0.8.0] - 2026-07-17
+
 ### Added
+- **Card and list views**: My Skills can switch between responsive card and compact list layouts while preserving selection and filtering state.
+- **Collapsible desktop navigation**: The sidebar can collapse to icon-only navigation, giving the workspace more room at smaller window sizes.
+- **Recognizable tool identities**: Built-in AI coding tools use their product icons consistently across tool management, installation, and Skill sync status.
 - **Custom tool identity and sync modes**: Custom tools support avatars and explicit automatic, symbolic link, Windows junction, or copy modes. Legacy configurations default to no avatar and automatic mode.
 - **Custom tool editing**: Existing custom tools can update their name, avatar, global/project directories, and sync mode. Active targets migrate to the new directory or representation.
 - **Title bar update status**: The app checks for updates after startup and shows an actionable icon when a new version is available, reusing the existing release notes and installation flow.
 
 ### Changed
+- **Desktop UI redesign**: My Skills, Explore, Tags, Tools, Updates, Settings, and installation flows now share a consistent desktop layout, spacing system, scrolling behavior, and responsive rules.
+- **Installation workflow**: Online, Git repository, and local folder installation use a unified structure with visible tag, tool, scope, summary, and action areas.
+- **Skills Hub branding**: Replaced the application logo and generated desktop icons with the new balanced Skills Hub mark for consistent use in the app, installer, and operating system launcher.
 - **Tool card action hierarchy**: Custom tool cards keep enable/disable in the top-right corner and move edit/delete actions into a separate footer.
 - **GitHub project entry**: The open-source project link moved to the GitHub & network settings section and opens in the system default browser.
 - **Skill card column sizing**: Card view keeps a stable column width instead of stretching a single filtered result across the content area.
@@ -202,4 +215,7 @@ All notable changes to this project will be documented in this file.
 ### Performance
 - Git import and batch install optimizations: cached clones reduce repeated fetches; timeouts and non‑interactive git improve stability.
 
+[Unreleased]: https://github.com/qufei1993/skills-hub/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/qufei1993/skills-hub/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/qufei1993/skills-hub/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/qufei1993/skills-hub/compare/v0.7.0...v0.7.1
